@@ -1,0 +1,19 @@
+FileVersion = 1
+Projects = {nova = {Path = "."}, MiniZ = "*", Bulkan = "*", "Bulkan.Utilities" = "*", StbImageBeef = "*"}
+Unlocked = ["Bulkan"]
+
+[Workspace]
+StartupProject = "nova"
+
+[Configs.Debug.Win64]
+BfSIMDSetting = "SSE"
+AllocStackTraceDepth = 8
+
+[Configs.Release.Win64]
+BfSIMDSetting = "SSE"
+
+[[Configs.Release.Win64.DistinctOptions]]
+Filter = ""
+
+[[Configs.Release.Win64.DistinctOptions]]
+Filter = ""
