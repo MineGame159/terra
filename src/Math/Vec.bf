@@ -40,6 +40,28 @@ struct Vec<T, C>
 		[Inline, Unchecked] get mut => ref values[index];
 	}
 
+	public int LargestAxis { [Optimize] get {
+		int axis = 0;
+
+		for (let i < C) {
+			if (values[i] > values[axis])
+				axis = i;
+		}
+
+		return axis;
+	} }
+
+	public int SmallestAxis { [Optimize] get {
+		int axis = 0;
+
+		for (let i < C) {
+			if (values[i] < values[axis])
+				axis = i;
+		}
+
+		return axis;
+	} }
+
 	[Optimize]
 	public Self Min(Self v) {
 		T[C] values = ?;

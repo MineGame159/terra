@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 
 using Nova.Gpu;
+using Nova.BVH;
 
 namespace Nova;
 
@@ -287,15 +288,14 @@ class Scene {
 			}
 
 			// Build BVH
-			BVH.Result result = BVH.Build(.(), meshTriangles);
+			BVH bvh = scope BinnedSahBvhBuilder<Triangle>(meshTriangles).Build();
+			bvh.ReorderPrimitives(meshTriangles);
 
 			// Copy mesh BVH and triangles to global lists
 			rootBvhIndex = (.) triangleBvh.Count;
 			uint32 rootTriangleIndex = (.) triangles.Count;
 
-			for (int i < result.nodeCount) {
-				BVH.Node node = result.nodes[i];
-
+			for (var node in bvh.nodes) {
 				if (node.count == 0) node.start += rootBvhIndex;
 				else node.start += rootTriangleIndex;
 
@@ -305,7 +305,7 @@ class Scene {
 			triangles.AddRange(meshTriangles);
 
 			// Free BVH
-			BVH.Free(result);
+			delete bvh;
 
 			// Add index to dictionary
 			meshInstaceRootBvhIndices[GLTF.Mesh.GetHashCode(mesh)] = rootBvhIndex;
@@ -401,13 +401,20 @@ class Scene {
 	public Result<(GpuBuffer bvhBuffer, GpuBuffer primitivesBuffer)> CreateMeshInstanceBuffers(Gpu gpu) => CreateBvhBuffers(gpu, meshInstances);
 
 	private Result<(GpuBuffer bvhBuffer, GpuBuffer primitivesBuffer)> CreateBvhBuffers<T>(Gpu gpu, List<T> primitives) where T : IPrimitive {
-		BVH.Result bvh = BVH.Build(.(), primitives);
-		defer BVH.Free(bvh);
+		// Theoretically the simple brute-force approach should produce slightly better trees at the cost of build time
+		// That doesn't matter here because there is only ever going to be a few mesh instances compared to triangles
+		BVH bvh = scope SimpleSahBvhBuilder<T>(primitives).Build();
+		bvh.ReorderPrimitives(primitives);
+		defer delete bvh;
 
-		GpuBuffer bvhBuffer = gpu.CreateBuffer(.Storage, (.) (sizeof(BVH.Node) * bvh.nodeCount)).GetOrPropagate!();
+		if (primitives.IsEmpty) {
+			bvh.nodes[0].aabb = .(.ZERO, .ZERO);
+		}
+
+		GpuBuffer bvhBuffer = gpu.CreateBuffer(.Storage, (.) (sizeof(BVH.Node) * bvh.nodes.Count)).GetOrPropagate!();
 		GpuBuffer primitivesBuffer = gpu.CreateBuffer(.Storage, (.) (sizeof(T) * primitives.Count)).GetOrPropagate!();
 
-		gpu.Upload(bvhBuffer, bvh.nodes).GetOrPropagate!();
+		gpu.Upload(bvhBuffer, bvh.nodes.Ptr).GetOrPropagate!();
 		if (primitives.Count > 0) gpu.Upload(primitivesBuffer, primitives.Ptr).GetOrPropagate!();
 
 		return (bvhBuffer, primitivesBuffer);

@@ -15,7 +15,6 @@ Hit IntersectsBVH<T : IPrimitive>(StructuredBuffer<BVHNode> nodes, StructuredBuf
         return Hit.Miss();
     
     var closestHit = Hit.Far();
-    closestHit.t = float.maxValue;
 
     uint stack[64];
     stack[0] = root;
