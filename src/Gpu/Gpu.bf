@@ -7,6 +7,8 @@ using Bulkan.Utilities;
 using static Bulkan.VulkanNative;
 using static Bulkan.Utilities.VulkanMemoryAllocator;
 
+using Nova.Profiler;
+
 namespace Nova.Gpu;
 
 class Gpu {
@@ -54,6 +56,7 @@ class Gpu {
 		vkDestroyInstance(instance, null);
 	}
 
+	[Profile]
 	public Result<void> Init() {
 		// Initialize Vulkan library
 		VulkanNative.Initialize();
@@ -96,7 +99,8 @@ class Gpu {
 	}
 
 	// Resources
-
+	
+	[Profile]
 	public Result<GpuBuffer> CreateBuffer(GpuBufferType type, uint64 size) {
 		VkBufferCreateInfo bufferInfo = .() {
 			usage = type.Vk | .VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -119,7 +123,8 @@ class Gpu {
 
 		return buffer;
 	}
-
+	
+	[Profile]
 	public Result<GpuImage> CreateImage(GpuImageFormat format, int width, int height, bool texture) {
 		VkImageCreateInfo imageInfo = .() {
 			imageType = .VK_IMAGE_TYPE_2D,
@@ -180,7 +185,8 @@ class Gpu {
 
 		return image;
 	}
-
+	
+	[Profile]
 	public Result<GpuProgram> CreateProgram(Span<uint8> shaderData, uint64 pushConstantSize, params ResourceType[] resourceTypes) {
 		// Descriptor set layout
 		VkDescriptorSetLayout setLayout = GetDescriptorLayout(resourceTypes).GetOrPropagate!();
@@ -248,7 +254,8 @@ class Gpu {
 
 		return program;
 	}
-
+	
+	[Profile]
 	public Result<void> Upload(GpuBuffer buffer, void* data) {
 		// Create staging buffer
 		VkBufferCreateInfo bufferInfo = .() {
@@ -316,7 +323,8 @@ class Gpu {
 
 		return .Ok;
 	}
-
+	
+	[Profile]
 	public Result<void> Upload(GpuImage image, uint8* pixels) {
 		void* data = ?;
 
@@ -331,7 +339,8 @@ class Gpu {
 	}
 
 	// Initialization
-
+	
+	[Profile]
 	private Result<void> CreateInstance() {
 		VkApplicationInfo appInfo = .() {
 			pApplicationName = "Nova Renderer",
@@ -363,7 +372,8 @@ class Gpu {
 	}
 
 	typealias DebugCallbackFunction = function VkBool32(VkDebugUtilsMessageSeverityFlagsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
-
+	
+	[Profile]
 	private Result<void> SetupDebugCallback() {
 		DebugCallbackFunction callback = => DebugCallback;
 
@@ -394,7 +404,8 @@ class Gpu {
 
 		return false;
 	}
-
+	
+	[Profile]
 	private Result<void> FindPhysicalDevice() {
 		uint32 count = 0;
 		vkEnumeratePhysicalDevices(instance, &count, null);
@@ -431,7 +442,8 @@ class Gpu {
 
 		return .Ok;
 	}
-
+	
+	[Profile]
 	private Result<void> CreateDevice() {
 		QueueFamilyIndices indices = FindQueueFamilies(physicalDevice);
 
@@ -496,7 +508,7 @@ class Gpu {
 			return computeFamily.HasValue;
 		} }
 	}
-
+	
 	public static QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device) {
 		QueueFamilyIndices indices = .();
 

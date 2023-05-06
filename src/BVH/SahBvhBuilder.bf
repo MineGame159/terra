@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 
 using Nova.Math;
+using Nova.Profiler;
 
 namespace Nova.BVH;
 
@@ -17,7 +18,8 @@ abstract class SahBvhBuilder<T> where T : IPrimitive {
 	}
 
 	protected abstract float FindBestSplitPlane(BVH.Node* node, ref int bestAxis, ref float bestPos);
-
+	
+	[Profile]
 	public BVH Build() {
 		// Root node
 		uint32 rootI = AddNode();

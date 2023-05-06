@@ -4,8 +4,9 @@ using System.Collections;
 
 using StbImageBeef;
 using Hebron.Runtime;
-
 using MiniZ;
+
+using Nova.Profiler;
 
 namespace Nova;
 
@@ -37,7 +38,8 @@ class Image {
 	public ref Color Get(int x, int y) {
 		return ref ((Color*) pixels)[y * width + x];
 	}
-
+	
+	[Profile]
 	public static Result<Image> Load(Span<uint8> data) {
 		int32 width = 0;
 		int32 height = 0;
@@ -50,7 +52,8 @@ class Image {
 	}
 
 	// Writing
-
+	
+	[Profile]
 	public void Write(StringView path, bool rgba = false) {
 		FileStream s = scope .();
 		s.Create(path, .Write);

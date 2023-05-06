@@ -3,6 +3,7 @@ using System.Collections;
 
 using Nova.Gpu;
 using Nova.Math;
+using Nova.Profiler;
 
 namespace Nova.Scene;
 
@@ -16,7 +17,8 @@ class GltfSceneLoader : ISceneLoader {
 	public this(StringView path) {
 		this.path.Set(path);
 	}
-
+	
+	[Profile]
 	public Result<void> Load(ISceneBuilder scene) {
 		GLTF.Data* data = Parse().GetOrPropagate!();
 		defer GLTF.Free(data);
@@ -28,7 +30,8 @@ class GltfSceneLoader : ISceneLoader {
 
 		return .Ok;
 	}
-
+	
+	[Profile]
 	private Result<void> AddMeshes(ISceneBuilder scene, GLTF.Data* data) {
 		for (let (node, transform) in scope GLTF.NodeEnumerator(data, true)) {
 			uint32 meshId = meshIds.GetValue(node.mesh).GetOrPropagate!();
@@ -37,7 +40,8 @@ class GltfSceneLoader : ISceneLoader {
 
 		return .Ok;
 	}
-
+	
+	[Profile]
 	private Result<void> CreateMeshes(ISceneBuilder scene, GLTF.Data* data) {
 		for (var mesh in ref data.Meshes) {
 			// Get number of triangles
@@ -124,7 +128,8 @@ class GltfSceneLoader : ISceneLoader {
 
 		return .Ok;
 	}
-
+	
+	[Profile]
 	private Result<uint32> CreateMaterial(ISceneBuilder scene, GLTF.Material* material) {
 		Material mat = .();
 
@@ -187,7 +192,8 @@ class GltfSceneLoader : ISceneLoader {
 
 		return scene.CreateMaterial(mat);
 	}
-
+	
+	[Profile]
 	private Result<void> CreateTextures(ISceneBuilder scene, GLTF.Data* data) {
 		// Images
 		for (var image in ref data.Images) {
@@ -225,7 +231,8 @@ class GltfSceneLoader : ISceneLoader {
 
 		return .Ok;
 	}
-
+	
+	[Profile]
 	private Result<void> SetCamera(ISceneBuilder scene, GLTF.Data* data) {
 		for (let (node, transform) in scope GLTF.NodeEnumerator(data, false)) {
 			if (node.camera != null && node.camera.type == .Perspective) {
@@ -244,7 +251,8 @@ class GltfSceneLoader : ISceneLoader {
 
 		return .Ok;
 	}
-
+	
+	[Profile]
 	private Result<GLTF.Data*> Parse() {
 		GLTF.Options options = GLTF.GetDefaultOptions();
 		GLTF.Data* data = null;

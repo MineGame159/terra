@@ -4,6 +4,7 @@ using System.Collections;
 using Nova.Gpu;
 using Nova.BVH;
 using Nova.Math;
+using Nova.Profiler;
 
 namespace Nova.Scene;
 
@@ -38,7 +39,8 @@ class GpuSceneBuilder : ISceneBuilder {
 	}
 
 
-
+	
+	[Profile]
 	public Result<uint32> CreateImage(int width, int height, uint8* pixels) {
 		GpuImage image = gpu.CreateImage(.RGBA8u, width, height, true).GetOrPropagate!();
 		gpu.Upload(image, pixels).GetOrPropagate!();
@@ -46,17 +48,20 @@ class GpuSceneBuilder : ISceneBuilder {
 		images.Add(image);
 		return (.) images.Count - 1;
 	}
-
+	
+	[Profile]
 	public uint32 CreateTexture(uint32 imageId, TextureFilter min, TextureFilter mag) {
 		textures.Add(.(images[imageId], gpu.GetSampler(min, mag)));
 		return (.) textures.Count - 1;
 	}
-
+	
+	[Profile]
 	public uint32 CreateMaterial(Material material) {
 		materials.Add(material);
 		return (.) materials.Count - 1;
 	}
-
+	
+	[Profile]
 	public IMeshBuilder CreateMesh(int triangleCount, out uint32 meshId) {
 		GpuMeshBuilder mesh = new GpuMeshBuilder(this, triangleCount);
 
@@ -120,7 +125,8 @@ class GpuSceneBuilder : ISceneBuilder {
 	} }
 
 
-
+	
+	[Profile]
 	public Result<GpuBuffer> CreateSceneDataBuffer(Gpu gpu, int width, int height) {
 		GpuBuffer buffer = gpu.CreateBuffer(.Uniform, sizeof(GlobalData)).GetOrPropagate!();
 
@@ -135,9 +141,11 @@ class GpuSceneBuilder : ISceneBuilder {
 		gpu.Upload(buffer, &data).GetOrPropagate!();
 		return buffer;
 	}
-
+	
+	[Profile]
 	public Result<(GpuBuffer bvhBuffer, GpuBuffer primitivesBuffer)> CreateSphereBuffers(Gpu gpu) => CreateBvhBuffers(gpu, spheres);
-
+	
+	[Profile]
 	public Result<(GpuBuffer bvhBuffer, GpuBuffer primitivesBuffer)> CreateTriangleBuffers(Gpu gpu) {
 		int triangleCount = 0;
 		int nodeCount = 0;
@@ -183,7 +191,8 @@ class GpuSceneBuilder : ISceneBuilder {
 
 		return (bvhBuffer, primitivesBuffer);
 	}
-
+	
+	[Profile]
 	public Result<(GpuBuffer bvhBuffer, GpuBuffer primitivesBuffer)> CreateMeshInstanceBuffers(Gpu gpu) => CreateBvhBuffers(gpu, meshInstances);
 
 	private Result<(GpuBuffer bvhBuffer, GpuBuffer primitivesBuffer)> CreateBvhBuffers<T>(Gpu gpu, List<T> primitives) where T : IPrimitive {
@@ -205,7 +214,8 @@ class GpuSceneBuilder : ISceneBuilder {
 
 		return (bvhBuffer, primitivesBuffer);
 	}
-
+	
+	[Profile]
 	public Result<GpuBuffer> CreateMaterialsBuffer(Gpu gpu) {
 		GpuBuffer buffer = gpu.CreateBuffer(.Storage, (.) (sizeof(Material) * materials.Count)).GetOrPropagate!();
 

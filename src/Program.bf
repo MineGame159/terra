@@ -5,6 +5,7 @@ using System.Collections;
 using Nova.Gpu;
 using Nova.Scene;
 using Nova.Math;
+using Nova.Profiler;
 
 namespace Nova;
 
@@ -13,6 +14,7 @@ static class Program {
 
 	const int SIZE = 8;
 
+	[Profile(false)]
 	public static void Main() {
 		// Initialize GPU
 		Gpu gpu = scope .();
@@ -32,6 +34,8 @@ static class Program {
 		}
 
 		// Input
+		Zone zone = .(Locations.Create("Input"));
+
 		InputData input = scope .();
 
 		/*input.width = 960;
@@ -49,7 +53,11 @@ static class Program {
 
 		Console.WriteLine();
 
+		zone.Dispose();
+
 		// Create resources
+		zone = .(Locations.Create("CreateResources"));
+
 		let globalDataBuffer = scene.CreateSceneDataBuffer(gpu, input.width, input.height);
 		let (sphereBvhBuffer, spherePrimitivesBuffer) = scene.CreateSphereBuffers(gpu).Value;
 		let (triangleBvhBuffer, trianglePrimitivesBuffer) = scene.CreateTriangleBuffers(gpu).Value;
@@ -68,7 +76,11 @@ static class Program {
 		GpuProgramInstance instance1 = program.CreateInstance(globalDataBuffer, sphereBvhBuffer, spherePrimitivesBuffer, triangleBvhBuffer, trianglePrimitivesBuffer, meshInstanceBvhBuffer, meshInstancePrimitivesBuffer, materialsBuffer, textures, image1, image2);
 		GpuProgramInstance instance2 = program.CreateInstance(globalDataBuffer, sphereBvhBuffer, spherePrimitivesBuffer, triangleBvhBuffer, trianglePrimitivesBuffer, meshInstanceBvhBuffer, meshInstancePrimitivesBuffer, materialsBuffer, textures, image2, image1);
 
+		zone.Dispose();
+
 		// Execute program
+		zone = .(Locations.Create("Render"));
+
 		Console.WriteLine("Rendering");
 
 		int width = input.width / SIZE;
@@ -118,6 +130,8 @@ static class Program {
 			lastProgress = progress;
 		}
 
+		zone.Dispose();
+
 		// Print render stats
 		Console.WriteLine();
 		Console.WriteLine();
@@ -128,6 +142,8 @@ static class Program {
 		Console.WriteLine();
 
 		// Save image
+		zone = .(Locations.Create("SaveImage"));
+
 		using (Timer("Saved image")) {
 			using (let data = outputImage.Map().Value) {
 				Image outImage = scope .(input.width, input.height);
@@ -155,9 +171,19 @@ static class Program {
 			}
 		}
 
-		// Finished
 		Console.WriteLine("Saved to image.png");
+
+		zone.Dispose();
+
+		// Finished
+		__zone.Dispose();
+
 		Console.Read();
+
+		// Export profile
+		Profile profile = .Parse();
+		ProfileTxtExporter.Export(profile, "profile.txt");
+		delete profile;
 	}
 
 	private static void PrintStats(ISceneBuilder scene) {

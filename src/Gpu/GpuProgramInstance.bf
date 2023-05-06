@@ -4,6 +4,8 @@ using Bulkan;
 using Bulkan.Utilities;
 using static Bulkan.VulkanNative;
 
+using Nova.Profiler;
+
 namespace Nova.Gpu;
 
 class GpuProgramInstance : GpuObject {
@@ -21,6 +23,7 @@ class GpuProgramInstance : GpuObject {
 		resources.CopyTo(this.resources);
 	}
 
+	[Profile]
 	public Result<TimeSpan> Execute<T>(T pushConstant, int xCount, int yCount) where T : struct {
 		// Record
 		VkCommandBufferBeginInfo beginInfo = .();
