@@ -4,7 +4,7 @@ using System.Collections;
 
 namespace Nova;
 
-class OBJ : IEnumerable<Part> {
+/*class OBJ : IEnumerable<Part> {
 	public struct Triangle : this(uint32 i1, uint32 i2, uint32 i3) {}
 
 	public class Part : IEnumerable<Triangle> {
@@ -148,4 +148,4 @@ class OBJ : IEnumerable<Part> {
 
 		return .Ok;
 	}
-}
+}*/

@@ -9,7 +9,8 @@ interface IPrimitive {
 
 struct Sphere {
     float4 data;
-    Material material;
+    
+    uint materialIndex;
 
     __init(float3 center, float radius) {
         this.data = float4(center, radius);

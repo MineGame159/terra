@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova;
+namespace Nova.Math;
 
 [CRepr]
 struct AABB<T, C>

@@ -21,7 +21,7 @@ extension Sphere : IPrimitive {
         if (t < 0) return Hit.Miss();
 
         let point = ray.At(t);
-        return Hit(t, point, normalize(point - center), float2(0, 0), material);
+        return Hit(t, point, normalize(point - center), float2(0, 0), materials[materialIndex]);
     }
 }
 

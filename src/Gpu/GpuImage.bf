@@ -16,6 +16,13 @@ enum GpuImageFormat {
 		case .RGBA32f:	return .VK_FORMAT_R32G32B32A32_SFLOAT;
 		}
 	} }
+
+	public int Size { get {
+		switch (this) {
+		case .RGBA8u:	return 4;
+		case .RGBA32f:	return 16;
+		}
+	} }
 }
 
 class GpuImage : GpuObject {

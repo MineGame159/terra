@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 
+using Nova.Math;
+
 namespace Nova.BVH;
 
 class BVH {

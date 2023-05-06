@@ -3,7 +3,9 @@ using System.Interop;
 using System.Collections;
 using System.Diagnostics;
 
-namespace Nova;
+using Nova.Math;
+
+namespace Nova.Scene;
 
 static class GLTF {
 	public enum Result : c_int {
@@ -467,6 +469,8 @@ static class GLTF {
 		public c_size extensionsCount;
 		public Extension* extensions;
 
+		public Span<Primitive> Primitives => .(primitives, (.) primitivesCount);
+
 		public static int GetHashCode(Mesh* mesh) {
 			return Utils.CombineHashCode((.) (void*) mesh, Utils.CombineHashCode(StringView(mesh.name).GetHashCode(), (.) mesh.primitivesCount));
 		}
@@ -714,6 +718,10 @@ static class GLTF {
 
 		public MemoryOptions memory;
 		public FileOptions file;
+
+		public Span<Image> Images => .(images, (.) imagesCount);
+		public Span<Texture> Textures => .(textures, (.) texturesCount);
+		public Span<Mesh> Meshes => .(meshes, (.) meshesCount);
 	}
 
 	[LinkName("cgltf_parse_file")]
@@ -769,7 +777,7 @@ static class GLTF {
 
 			for (uint i < data.scene.nodesCount) {
 				Node* node = data.scene.nodes[i];
-				entries.Add(.(node, .(.ZERO, .(), .(1, 1, 1), .Identity(), .Identity())));
+				entries.Add(.(node, .(.ZERO, .(), .(1, 1, 1))));
 			}
 		}
 
@@ -791,17 +799,18 @@ static class GLTF {
 
 			Entry entry = entries.PopBack();
 
-			MeshTransform nodeTransform = GetTransform(entry.node);
-			//MeshTransform globalTransform = Combine(entry.transform, nodeTransform);
+			Vec3f translation = .(entry.node.translation[0], entry.node.translation[1], entry.node.translation[2]);
+			Quaternion rotation = .(entry.node.rotation);
+			Vec3f scale = .(entry.node.scale[0], entry.node.scale[1], entry.node.scale[2]);
 
 			MeshTransform globalTransform = entry.transform;
 
-			globalTransform.originMatrix = globalTransform.originMatrix.Translate(nodeTransform.position);
-			globalTransform.originMatrix = globalTransform.originMatrix * nodeTransform.rotation.Matrix.Transpose();
-			globalTransform.originMatrix = globalTransform.originMatrix.Scale(nodeTransform.scale);
+			globalTransform.originMatrix = globalTransform.originMatrix.Translate(translation);
+			globalTransform.originMatrix = globalTransform.originMatrix * rotation.Matrix.Transpose();
+			globalTransform.originMatrix = globalTransform.originMatrix.Scale(scale);
 			
-			globalTransform.directionMatrix = globalTransform.directionMatrix * nodeTransform.rotation.Matrix.Transpose();
-			globalTransform.directionMatrix = globalTransform.directionMatrix.Scale(nodeTransform.scale);
+			globalTransform.directionMatrix = globalTransform.directionMatrix * rotation.Matrix.Transpose();
+			globalTransform.directionMatrix = globalTransform.directionMatrix.Scale(scale);
 
 			for (uint i < entry.node.childrenCount) {
 				Node* node = entry.node.children[i];
@@ -809,25 +818,6 @@ static class GLTF {
 			}
 
 			return (entry.node, globalTransform);
-		}
-
-		private static MeshTransform GetTransform(Node* node) {
-			return .(
-				.(node.translation[0], node.translation[1], node.translation[2]),
-				.(node.rotation),
-				.(node.scale[0], node.scale[1], node.scale[2])
-			);
-		}
-
-		private static MeshTransform Combine(MeshTransform a, MeshTransform b) {
-			return .(
-				a.position + b.position * a.scale,
-				a.rotation.Rotate(b.rotation),
-				a.scale * b.scale,
-
-				a.originMatrix * b.originMatrix,
-				a.directionMatrix * b.directionMatrix
-			);
 		}
 	}
 }

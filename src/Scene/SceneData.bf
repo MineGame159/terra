@@ -1,6 +1,16 @@
 using System;
 
-namespace Nova;
+using Nova.Math;
+
+namespace Nova.Scene;
+
+[CRepr]
+struct GlobalData {
+	public float widthF, heightF, _0, _1;
+	public uint32 widthI, heightI, _2, _3;
+
+	public Camera camera;
+}
 
 [CRepr]
 struct Camera {

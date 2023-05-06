@@ -1,15 +1,12 @@
 using System;
 
-namespace Nova;
+using Nova.BVH;
+using Nova.Math;
 
-interface IPrimitive {
-	Vec3f Center { get; }
-
-	AABB3f Box { get; }
-}
+namespace Nova.Scene;
 
 [CRepr]
-struct Sphere : this(Vec3f center, float radius, Material material), IPrimitive {
+struct Sphere : this(Vec3f center, float radius, uint32[4] data), IPrimitive {
 	public Vec3f Center => center;
 
 	public AABB3f Box => .(center - radius, center + radius);

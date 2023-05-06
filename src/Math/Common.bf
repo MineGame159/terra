@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova;
+namespace Nova.Math;
 
 struct _Yes;
 struct _No;

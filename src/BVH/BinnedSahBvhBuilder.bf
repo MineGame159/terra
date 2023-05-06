@@ -1,12 +1,14 @@
 using System;
 using System.Collections;
 
+using Nova.Math;
+
 namespace Nova.BVH;
 
 class BinnedSahBvhBuilder<T> : SahBvhBuilder<T> where T : IPrimitive {
 	public const int BINS = 16;
 
-	public this(List<T> primitives) : base(primitives) {}
+	public this(Span<T> primitives) : base(primitives) {}
 
 	protected override float FindBestSplitPlane(BVH.Node* node, ref int bestAxis, ref float bestPos) {
 		float bestCost = float.MaxValue;

@@ -3,42 +3,10 @@ using System.IO;
 using System.Collections;
 
 using Nova.Gpu;
+using Nova.Scene;
+using Nova.Math;
 
 namespace Nova;
-
-[CRepr]
-struct GlobalData {
-	public float widthF, heightF, _0, _1;
-	public uint32 widthI, heightI, _2, _3;
-
-	public Camera camera;
-}
-
-[CRepr]
-struct Material {
-	public Vec4f albedo;
-	public Vec4f emission;
-
-	public float metallic;
-	public float subsurface;
-	public float roughness = 0.5f;
-	public float specularTint;
-	public float sheen;
-	public float sheenTint = 0.5f;
-	public float clearcoat;
-
-	public float clearcoatRoughness;
-	public float specTrans;
-	public float anisotropic;
-	public float ior = 1.5f;
-
-	public uint32 albedoTexture;
-	public uint32 metallicRoughnessTexture;
-	public uint32 emissionTexture;
-	public uint32 normalTexture;
-
-	private float _;
-}
 
 static class Program {
 	private const uint8[?] SHADER_DATA = Compiler.ReadBinary("shader/shader.spv");
@@ -51,21 +19,17 @@ static class Program {
 		if (gpu.Init() == .Err) return;
 
 		// Scene
-		StringView path = "scenes/monkey.lua";
+		StringView path = "scenes/models/forklift.gltf";
 
-		Scene scene = new .(Path.GetDirectoryPath(path, .. scope .()));
-		defer delete scene;
+		GpuSceneBuilder scene = scope .(gpu);
 
-		Lua.State state = Lua.NewState();
-
-		Lua.OpenLibs(state);
-		LuaBindings.Init(state, scene);
-
-		Lua.LoadFile(state, path.ToScopeCStr!());
-		Lua.PCall(state, 0, -1, 0);
-
-		Lua.CloseState(state);
-		//Console.Read();
+		if (path.EndsWith(".gltf") || path.EndsWith(".glb")) {
+			scope GltfSceneLoader(path).Load(scene);
+		}
+		else {
+			Log.Error("Unknown extension");
+			return;
+		}
 
 		// Input
 		InputData input = scope .();
@@ -86,7 +50,7 @@ static class Program {
 		Console.WriteLine();
 
 		// Create resources
-		let globalDataBuffer = scene.CreateGlobalDataBuffer(gpu, input.width, input.height);
+		let globalDataBuffer = scene.CreateSceneDataBuffer(gpu, input.width, input.height);
 		let (sphereBvhBuffer, spherePrimitivesBuffer) = scene.CreateSphereBuffers(gpu).Value;
 		let (triangleBvhBuffer, trianglePrimitivesBuffer) = scene.CreateTriangleBuffers(gpu).Value;
 		let (meshInstanceBvhBuffer, meshInstancePrimitivesBuffer) = scene.CreateMeshInstanceBuffers(gpu).Value;
@@ -196,15 +160,15 @@ static class Program {
 		Console.Read();
 	}
 
-	private static void PrintStats(Scene scene) {
+	private static void PrintStats(ISceneBuilder scene) {
 		SceneStats stats = scene.Stats;
 		
-		Console.WriteLine("Spheres:   {:#,0} ({})", stats.spheres.Count, FormatBytes(stats.spheres.Bytes, .. scope .()));
-		Console.WriteLine("Triangles: {:#,0} ({})", stats.triangles.Count, FormatBytes(stats.triangles.Bytes, .. scope .()));
-		Console.WriteLine("Meshes:    {:#,0} ({})", stats.meshes.Count, FormatBytes(stats.meshes.Bytes, .. scope .()));
+		Console.WriteLine("Spheres:   {:#,0} ({})", stats.sphereCount, FormatBytes(stats.sphereBytes, .. scope .()));
+		Console.WriteLine("Triangles: {:#,0} ({})", stats.triangleCount, FormatBytes(stats.triangleBytes, .. scope .()));
+		Console.WriteLine("Meshes:    {:#,0} ({})", stats.meshCount, FormatBytes(stats.meshBytes, .. scope .()));
 
-		Console.WriteLine("Materials: {:#,0} ({})", stats.materials.Count, FormatBytes(stats.materials.Bytes, .. scope .()));
-		Console.WriteLine("Textures:  {:#,0} ({})", stats.textures.Count, FormatBytes(stats.textures.Bytes, .. scope .()));
+		Console.WriteLine("Materials: {:#,0} ({})", stats.materialCount, FormatBytes(stats.materialBytes, .. scope .()));
+		Console.WriteLine("Textures:  {:#,0} ({})", stats.textureCount, FormatBytes(stats.textureBytes, .. scope .()));
 
 		Console.WriteLine();
 	}

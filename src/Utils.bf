@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
 
+using Nova.Math;
+
 namespace Nova;
 
 static class Utils {

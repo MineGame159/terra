@@ -1,17 +1,19 @@
 using System;
 using System.Collections;
 
+using Nova.Math;
+
 namespace Nova.BVH;
 
 abstract class SahBvhBuilder<T> where T : IPrimitive {
-	protected List<T> primitives;
+	protected Span<T> primitives;
 
 	private BVH bvh;
 
-	public this(List<T> primitives) {
+	public this(Span<T> primitives) {
 		this.primitives = primitives;
 
-		this.bvh = new .(primitives.Count);
+		this.bvh = new .(primitives.Length);
 	}
 
 	protected abstract float FindBestSplitPlane(BVH.Node* node, ref int bestAxis, ref float bestPos);
@@ -22,7 +24,7 @@ abstract class SahBvhBuilder<T> where T : IPrimitive {
 		BVH.Node* root = &bvh.nodes[rootI];
 
 		root.start = 0;
-		root.count = (.) primitives.Count;
+		root.count = (.) primitives.Length;
 
 		UpdateNodeBounds(rootI);
 

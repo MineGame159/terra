@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova;
+namespace Nova.Math;
 
 [CRepr, Union]
 struct Mat<T, R, C>

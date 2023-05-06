@@ -1,5 +1,7 @@
 using System;
 
+using Nova.Math;
+
 namespace Nova;
 
 enum ToneMappingOperator {

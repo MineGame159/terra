@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova;
+namespace Nova.Math;
 
 struct Quaternion {
 	public float x, y, z, w;
@@ -39,12 +39,6 @@ struct Quaternion {
 
 		return mat;
 	} }
-
-	public Quaternion Rotate(Quaternion quat) {
-		return this;
-		return quat;
-		return .(x * quat.x, y * quat.y, z * quat.z, w * quat.w);
-	}
 
 	public static Self operator *(Self lhs, Self rhs) {
 		return .(

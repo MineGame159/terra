@@ -317,13 +317,13 @@ class Gpu {
 		return .Ok;
 	}
 
-	public Result<void> Upload(GpuImage image, Image img) {
+	public Result<void> Upload(GpuImage image, uint8* pixels) {
 		void* data = ?;
 
 		VkResult result = vmaMapMemory(allocator, image.[Friend]allocation, &data);
 		if (result != .VK_SUCCESS) return .Err;
 
-		Internal.MemCpy(data, img.pixels, image.width * image.height * 4);
+		Internal.MemCpy(data, pixels, image.width * image.height * 4);
 
 		vmaUnmapMemory(allocator, image.[Friend]allocation);
 
