@@ -80,7 +80,22 @@ class GpuSceneBuilder : ISceneBuilder {
 	public void AddMesh(uint32 meshId, MeshTransform transform) {
 		GpuMeshBuilder mesh = meshes[meshId];
 
-		meshInstances.Add(.(transform.originMatrix, transform.directionMatrix, mesh.aabb, 0));
+		Mat4 originMatrix = transform.originMatrix;
+
+		AABB3f aabb = mesh.aabb;
+		AABB4f aabbNew = .(.MAX, .MIN);
+
+		aabbNew.Grow((.) (originMatrix * Vec4f(aabb.min.x, aabb.min.y, aabb.min.z, 1)));
+		aabbNew.Grow((.) (originMatrix * Vec4f(aabb.min.x, aabb.min.y, aabb.max.z, 1)));
+		aabbNew.Grow((.) (originMatrix * Vec4f(aabb.max.x, aabb.min.y, aabb.max.z, 1)));
+		aabbNew.Grow((.) (originMatrix * Vec4f(aabb.max.x, aabb.min.y, aabb.min.z, 1)));
+
+		aabbNew.Grow((.) (originMatrix * Vec4f(aabb.min.x, aabb.max.y, aabb.min.z, 1)));
+		aabbNew.Grow((.) (originMatrix * Vec4f(aabb.min.x, aabb.max.y, aabb.max.z, 1)));
+		aabbNew.Grow((.) (originMatrix * Vec4f(aabb.max.x, aabb.max.y, aabb.max.z, 1)));
+		aabbNew.Grow((.) (originMatrix * Vec4f(aabb.max.x, aabb.max.y, aabb.min.z, 1)));
+
+		meshInstances.Add(.(transform.originMatrix, transform.directionMatrix, aabbNew, 0));
 		mesh.instanceIds.Add((.) meshInstances.Count - 1);
 	}
 
@@ -128,9 +143,9 @@ class GpuSceneBuilder : ISceneBuilder {
 	
 	[Profile]
 	public Result<GpuBuffer> CreateSceneDataBuffer(Gpu gpu, int width, int height) {
-		GpuBuffer buffer = gpu.CreateBuffer(.Uniform, sizeof(GlobalData)).GetOrPropagate!();
+		GpuBuffer buffer = gpu.CreateBuffer(.Uniform, sizeof(SceneData)).GetOrPropagate!();
 
-		GlobalData data = .();
+		SceneData data = .();
 
 		data.widthF = width;
 		data.heightF = height;

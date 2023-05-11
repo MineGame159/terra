@@ -2,8 +2,6 @@ using System;
 using System.IO;
 using System.Collections;
 
-using StbImageBeef;
-using Hebron.Runtime;
 using MiniZ;
 
 using Nova.Profiler;
@@ -14,41 +12,24 @@ class Image {
 	public int width, height;
 	public uint8* pixels;
 
-	private bool stb;
-
 	private this(int width, int height, uint8* pixels) {
 		this.width = width;
 		this.height = height;
 		this.pixels = pixels;
-		this.stb = true;
 	}
 
 	public this(int width, int height) {
 		this.width = width;
 		this.height = height;
 		this.pixels = new .[width * height * 3]*;
-		this.stb = false;
 	}
 
 	public ~this() {
-		if (stb) CRuntime.free(pixels);
-		else delete pixels;
+		delete pixels;
 	}
 
 	public ref Color Get(int x, int y) {
 		return ref ((Color*) pixels)[y * width + x];
-	}
-	
-	[Profile]
-	public static Result<Image> Load(Span<uint8> data) {
-		int32 width = 0;
-		int32 height = 0;
-		ColorComponents comp = .Default;
-
-		uint8* pixels = ImageResult.RawFromStream(scope SpanMemoryStream(data), .RedGreenBlueAlpha, out width, out height, out comp);
-		if (pixels == null) return .Err;
-
-		return new Image(width, height, pixels);
 	}
 
 	// Writing

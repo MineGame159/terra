@@ -1,85 +1,274 @@
 using System;
-using System.Interop;
+using System.IO;
 using System.Collections;
-using System.Diagnostics;
+
+using StbImageBeef;
+using Hebron.Runtime;
 
 using Nova.Math;
+using Nova.Json;
+using Nova.Profiler;
 
-namespace Nova.Scene;
+namespace Nova.Scene.Loaders;
 
-static class GLTF {
-	public enum Result : c_int {
-		Success,
-		DataTooShort,
-		UnknownFormat,
-		InvalidJson,
-		InvalidGltf,
-		InvalidOptions,
-		FileNotFound,
-		IoError,
-		OutOfMemory,
-		LegacyGlfw
+class Gltf {
+	public Buffer[] buffers ~ DeleteContainerAndItems!(_);
+	public BufferView[] bufferViews ~ DeleteContainerAndItems!(_);
+
+	public Accessor[] accessors ~ DeleteContainerAndItems!(_);
+	
+	public Image[] images ~ DeleteContainerAndItems!(_);
+	public Sampler[] samplers ~ DeleteContainerAndItems!(_);
+	public Texture[] textures ~ DeleteContainerAndItems!(_);
+	public Material[] materials ~ DeleteContainerAndItems!(_);
+
+	public Mesh[] meshes ~ DeleteContainerAndItems!(_);
+
+	public Camera[] cameras ~ DeleteContainerAndItems!(_);
+
+	public Node[] nodes ~ DeleteContainerAndItems!(_);
+
+	public Scene[] scenes ~ DeleteContainerAndItems!(_);
+	public Scene scene;
+
+	public class Buffer {
+		public List<uint8> data ~ delete _;
+
+		public this(int size) {
+			this.data = new .(size);
+		}
 	}
 
-	public typealias AllocFn = function void*(void* user, c_size size);
-	public typealias FreeFn = function void(void* user, void* ptr);
+	public class BufferView {
+		public Buffer buffer;
+		public uint32 offset, length;
 
-	[CRepr]
-	public struct MemoryOptions {
-		public AllocFn alloc;
-		public FreeFn free;
-		public void* user;
+		public uint8* Ptr => &buffer.data[offset];
+		public Span<uint8> Span => .(Ptr, length);
+
+		public T Get<T>(uint i) => ((T*) Ptr)[i];
 	}
 
-	public typealias ReadFn = function Result(MemoryOptions* memoryOptions, FileOptions* fileOptions, char8* path, c_size* size, void** data);
-	public typealias ReleaseFn = function void(MemoryOptions* memoryOptions, FileOptions* fileOptions, void* data);
-
-	[CRepr]
-	public struct FileOptions {
-		public ReadFn read;
-		public ReleaseFn release;
-		public void* user;
+	public class Accessor {
+		public BufferView view;
+		public ComponentType componentType;
+		public int count;
+		public ElementType type;
 	}
 
-	public enum FileType : c_int {
-		Invalid, // auto detect
-		Gltf,
-		Glb
+	public class Image {
+		public String name;
+
+		public int width, height;
+		public uint8* data ~ CRuntime.free(_);
+
+		[AllowAppend]
+		public this(StringView name) {
+			String _name = append .(name);
+			this.name = _name;
+		}
 	}
 
-	[CRepr]
-	public struct Options {
-		public FileType fileType;
-		public c_size jsonTokenCount; // 0 - auto detect
-		public MemoryOptions memory;
-		public FileType file;
+	public class Sampler {
+		public MagFilter mag = .Nearest;
+		public MinFilter min = .Nearest;
+
+		public Wrap wrapS = .Repeat;
+		public Wrap wrapT = .Repeat;
 	}
 
-	[CRepr]
-	public struct Extras {
-		public c_size startOffset;
-		public c_size endOffset;
-		public char8* data;
+	public class Texture {
+		public Image image;
+		public Sampler sampler;
 	}
 
-	[CRepr]
-	public struct Extension {
-		public char8* name;
-		public char8* data;
+	public struct PbrMetallicRoughness {
+		public Texture baseColorTexture;
+		public Texture metallicRoughnessTexture;
+
+		public Vec4f baseColorFactor;
+		public float metallicFactor;
+		public float roughnessFactor;
 	}
 
-	[CRepr]
-	public struct Asset {
-		public char8* copyright;
-		public char8* generator;
-		public char8* version;
-		public char8* minVersion;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
+	public struct Specular {
+		public Texture texture;
+		public Texture colorTexture;
+
+		public float factor;
+		public Vec3f colorFactor;
 	}
 
-	public enum PrimitiveType : c_int {
+	public struct Clearcoat {
+		public Texture texture;
+		public Texture roughnessTexture;
+		public Texture normalTexture;
+
+		public float factor;
+		public float roughnessFactor;
+	}
+
+	public struct Ior {
+		public float ior;
+	}
+
+	public struct Emission {
+		public Texture texture;
+		public Vec3f factor;
+		public float strength;
+	}
+
+	public class Material {
+		public String name;
+
+		public PbrMetallicRoughness? pbrMetallicRoughness;
+		public Specular? specular;
+		public Clearcoat? clearcoat;
+		public Ior? ior;
+		public Emission? emission;
+
+		public Texture normalTexture;
+		public Texture occlusionTexture;
+
+		[AllowAppend]
+		public this(StringView name) {
+			String _name = append .(name);
+			this.name = _name;
+		}
+	}
+
+	public class Mesh {
+		public String name;
+		public Primitive[] primitives;
+
+		[AllowAppend]
+		public this(StringView name, int primitiveCount) {
+			String _name = append .(name);
+			Primitive[] _primitives = append .[primitiveCount];
+
+			this.name = _name;
+			this.primitives = _primitives;
+		}
+
+		public ~this() {
+			for (let primitive in primitives)
+				delete primitive;
+		}
+
+		protected override void GCMarkMembers() {
+			for (let primitive in primitives)
+				GC.Mark(primitive);
+		}
+	}
+
+	public class Primitive {
+		public Dictionary<String, Accessor> attributes ~ DeleteDictionaryAndKeys!(_);
+		public Accessor indices;
+		public Material material;
+		public Mode mode;
+
+		public this(int attributeCount) {
+			this.attributes = new .((.) attributeCount);
+		}
+	}
+
+	public class Camera {
+		public String name;
+
+		public double aspectRatio;
+		public double yFov;
+		public double zFar;
+		public double zNear;
+
+		[AllowAppend]
+		public this(StringView name) {
+			String _name = append .(name);
+			this.name = _name;
+		}
+	}
+
+	public class Node {
+		public String name;
+
+		public Vec3d translation;
+		public Quaternion rotation;
+		public Vec3d scale;
+
+		public Node[] children;
+
+		public Camera camera;
+		public Mesh mesh;
+
+		[AllowAppend]
+		public this(StringView name, int childrenCount) {
+			String _name = append .(name);
+			Node[] _children = append .[childrenCount];
+
+			this.name = _name;
+			this.children = _children;
+		}
+	}
+
+	public class Scene {
+		public String name;
+		public Node[] nodes;
+
+		[AllowAppend]
+		public this(StringView name, int nodeCount) {
+			String _name = append .(name);
+			Node[] _nodes = append .[nodeCount];
+
+			this.name = _name;
+			this.nodes = _nodes;
+		}
+	}
+
+	public enum ComponentType {
+		I8,
+		U8,
+		I16,
+		U16,
+		U32,
+		F32
+	}
+
+	public enum ElementType {
+		Scalar,
+		Vec2,
+		Vec3,
+		Vec4,
+		Mat2,
+		Mat3,
+		Mat4
+	}
+
+	public enum MagFilter {
+		Nearest,
+		Linear
+	}
+
+	public enum MinFilter {
+		Nearest,
+		Linear,
+		NearestMipmapNearest,
+		LinearMipmapNearest,
+		NearestMipmapLinear,
+		LinearMipmapLinear
+	}
+
+	public enum Wrap {
+		ClampToEdge,
+		MirroredRepeat,
+		Repeat
+	}
+
+	public enum AlphaMode {
+		Opaque,
+		Mask,
+		Blend
+	}
+
+	public enum Mode {
 		Points,
 		Lines,
 		LineLoop,
@@ -89,699 +278,685 @@ static class GLTF {
 		TriangleFan
 	}
 
-	public enum ComponentType : c_int {
-		Invalid,
-		R8,
-		R8u,
-		R16,
-		R16u,
-		R32u,
-		R32f
-	}
+	// Parse
 
-	public enum Type : c_int {
-		Invalid,
-		Scalar,
-		Vec2,
-		Vec3,
-		Mat2,
-		Mat3,
-		Mat4
-	}
+	[Profile]
+	public static Result<Gltf> Parse(StringView path) {
+		FileStream fs = scope .();
+		if (fs.Open(path, .Read, .Read) case .Err) return .Err;
 
-	public enum DataFreeMethod : c_int {
-		None,
-		FileRelease,
-		MemoryRelease
-	}
+		JsonTree tree = null;
+		uint8[] binaryChunk = null;
 
-	[CRepr]
-	public struct Buffer {
-		public char8* name;
-		public c_size size;
-		public char8* uri;
-		public void* data;
-		public DataFreeMethod dataFreeMethod;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
+		if (path.EndsWith(".gltf"))
+			tree = JsonParser.Parse(fs).GetOrPropagate!();
+		else if (path.EndsWith(".glb"))
+			ParseGlb(fs, ref tree, ref binaryChunk).GetOrPropagate!();
+		else
+			return .Err;
 
-	public enum BufferViewType : c_int {
-		Invalid,
-		Indices,
-		Vertices
-	}
+		Json json = tree.root;
 
-	public enum MeshoptCompressionMode : c_int {
-		Invalid,
-		Attributes,
-		Triangles,
-		Indices
-	}
+		Gltf gltf = new .();
 
-	public enum MeshoptCompressionFilter : c_int {
-		None,
-		Octahedral,
-		Quaternion,
-		Exponential
-	}
+		defer {
+			delete tree;
+			delete binaryChunk;
 
-	[CRepr]
-	public struct MeshoptCompression {
-		public Buffer* buffer;
-		public c_size offset;
-		public c_size size;
-		public c_size stride;
-		public c_size count;
-		public MeshoptCompressionMode mode;
-		public MeshoptCompressionFilter filter;
-	}
-
-	[CRepr]
-	public struct BufferView {
-		public char8* name;
-		public Buffer* buffer;
-		public c_size offset;
-		public c_size size;
-		public c_size stride;
-		public BufferViewType type;
-		public void* data;
-		public c_int hasMeshoptCompression;
-		public MeshoptCompression meshoptCompression;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-
-		public uint8* Address => &((uint8*) buffer.data)[offset];
-
-		public T Get<T>(uint index) => ((T*) Address)[index];
-	}
-
-	[CRepr]
-	public struct AccessorSparse {
-		public c_size count;
-		public BufferView* indicesBufferView;
-		public c_size indicesByteOffset;
-		public ComponentType indicesComponentType;
-		public BufferView* valuesBufferView;
-		public c_size valuesByteOffset;
-		public Extras extras;
-		public Extras indicesExtras;
-		public Extras valuesExtras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-		public c_size indicesExtensionsCount;
-		public Extension* indicesExtensions;
-		public c_size valuesExtensionsCount;
-		public Extension* valuesExtensions;
-	}
-
-	[CRepr]
-	public struct Accessor {
-		public char8* name;
-		public ComponentType componentType;
-		public c_int normalized;
-		public Type type;
-		public c_size offset;
-		public c_size count;
-		public c_size stride;
-		public BufferView* bufferView;
-		public c_int hasMin;
-		public float[16] min;
-		public c_int hasMax;
-		public float[16] max;
-		public c_int isSparse;
-		public AccessorSparse sparse;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct Image {
-		public char8* name;
-		public char8* uri;
-		public BufferView* bufferView;
-		public char8* mimeType;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct Sampler {
-		public char8* name;
-		public c_int magFilter;
-		public c_int minFilter;
-		public c_int wrapS;
-		public c_int wrapT;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct Texture {
-		public char8* name;
-		public Image* image;
-		public Sampler* sampler;
-		public c_int hasBasisu;
-		public Image* basisuImage;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct TextureTransform {
-		public float[2] offset;
-		public float rotation;
-		public float[2] scale;
-		public c_int hasTexcoord;
-		public c_int texcoord;
-	}
-
-	[CRepr]
-	public struct TextureView {
-		public Texture* texture;
-		public c_int texcoord;
-		public float scale;
-		public c_int hasTransform;
-		public TextureTransform transform;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct PbrMetallicRoughness {
-		public TextureView baseColorTexture;
-		public TextureView metallicRoughnessTexture;
-
-		public float[4] baseColorFactor;
-		public float metallicFactor;
-		public float roughnessFactor;
-	}
-
-	[CRepr]
-	public struct PbrSpecularGlossiness {
-		public TextureView diffuseTexture;
-		public TextureView specularGlossinessTexture;
-
-		public float[4] diffuseFactor;
-		public float[3] specularFactor;
-		public float glossinessFactor;
-	}
-
-	[CRepr]
-	public struct Clearcoat {
-		public TextureView texture;
-		public TextureView roughnessTexture;
-		public TextureView normalTexture;
-
-		public float factor;
-		public float roughnessFactor;
-	}
-
-	[CRepr]
-	public struct Ior {
-		public float ior;
-	}
-
-	[CRepr]
-	public struct Specular {
-		public TextureView texture;
-		public TextureView colorTexture;
-
-		public float[3] colorFactor;
-		public float factor;
-	}
-
-	[CRepr]
-	public struct Sheen {
-		public TextureView colorTexture;
-		public float[3] colorFactor;
-
-		public TextureView roughnessTexture;
-		public float roughnessFactor;
-	}
-
-	[CRepr]
-	public struct Transmission {
-		public TextureView texture;
-		public float factor;
-	}
-
-	[CRepr]
-	public struct Volume {
-		public TextureView thicknessTexture;
-		public float thicknessFactor;
-		public float[3] attenuationColor;
-		public float attenuationDistance;
-	}
-
-	[CRepr]
-	public struct EmissiveStrength {
-		public float strength;
-	}
-
-	[CRepr]
-	public struct Iridescence {
-		public float factor;
-		public TextureView texture;
-		public float ior;
-		public float thicknessMin;
-		public float thicknessMax;
-		public TextureView thicknessTexture;
-	}
-
-	public enum AlphaMode : c_int {
-		Opaque,
-		Mask,
-		Blend
-	}
-
-	[CRepr]
-	public struct Material {
-		public char8* name;
-		public c_int hasPbrMetallicRoughness;
-		public c_int hasPbrSpecularGlossiness;
-		public c_int hasClearcoat;
-		public c_int hasTransmission;
-		public c_int hasVolume;
-		public c_int hasIor;
-		public c_int hasSpecular;
-		public c_int hasSheen;
-		public c_int hasEmissiveStrength;
-		public c_int hasIridescence;
-		public PbrMetallicRoughness pbrMetallicRoughness;
-		public PbrSpecularGlossiness pbrSpecularGlossiness;
-		public Clearcoat clearcoat;
-		public Ior ior;
-		public Specular specular;
-		public Sheen sheen;
-		public Transmission transmission;
-		public Volume volume;
-		public EmissiveStrength emissiveStrength;
-		public Iridescence iridescence;
-		public TextureView normalTexture;
-		public TextureView occlusionTexture;
-		public TextureView emissiveTexture;
-		public float[3] emissiveFactor;
-		public AlphaMode alphaMode;
-		public float alphaCutoff;
-		public c_int doubleSided;
-		public c_int unlit;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	public enum AttributeType : c_int {
-		Invalid,
-		Position,
-		Normal,
-		Tanget,
-		Texcoord,
-		Color,
-		Joints,
-		Weights,
-		Custom
-	}
-
-	[CRepr]
-	public struct Attribute {
-		public char8* name;
-		public AttributeType type;
-		public c_int index;
-		public Accessor* data;
-	}
-
-	[CRepr]
-	public struct MorphTarget {
-		public Attribute* attributes;
-		public c_size attributesCount;
-	}
-
-	[CRepr]
-	public struct DracoMeshCompression {
-		public BufferView* bufferView;
-		public Attribute* attributes;
-		public c_size attributesCount;
-	}
-
-	[CRepr]
-	public struct MaterialMapping {
-		public c_size variant;
-		public Material* material;
-		public Extras extras;
-	}
-
-	[CRepr]
-	public struct Primitive {
-		public PrimitiveType type;
-		public Accessor* indices;
-		public Material* material;
-		public Attribute* attributes;
-		public c_size attributesCount;
-		public MorphTarget* targets;
-		public c_size targetsCount;
-		public Extras extras;
-		public c_int hasDracoMeshCompression;
-		public DracoMeshCompression dracoMeshCompression;
-		public MaterialMapping* mappings;
-		public c_size mappingsCount;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct Mesh {
-		public char8* name;
-		public Primitive* primitives;
-		public c_size primitivesCount;
-		public float* weights;
-		public c_size weightsCount;
-		public char8** targetNames;
-		public c_size targetNamesCount;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-
-		public Span<Primitive> Primitives => .(primitives, (.) primitivesCount);
-
-		public static int GetHashCode(Mesh* mesh) {
-			return Utils.CombineHashCode((.) (void*) mesh, Utils.CombineHashCode(StringView(mesh.name).GetHashCode(), (.) mesh.primitivesCount));
+			if (@return == .Err) delete gltf;
 		}
+
+		StringView folder = Path.GetDirectoryPath(path, .. scope .());
+
+		ParseBuffers(gltf, json["buffers"], folder, binaryChunk).GetOrPropagate!();
+		ParseBufferViews(gltf, json["bufferViews"]).GetOrPropagate!();
+		ParseAccessors(gltf, json["accessors"]).GetOrPropagate!();
+		ParseImages(gltf, json["images"], folder).GetOrPropagate!();
+		ParseSamplers(gltf, json["samplers"]).GetOrPropagate!();
+		ParseTextures(gltf, json["textures"]).GetOrPropagate!();
+		ParseMaterials(gltf, json["materials"]).GetOrPropagate!();
+		ParseMeshes(gltf, json["meshes"]).GetOrPropagate!();
+		ParseCameras(gltf, json["cameras"]).GetOrPropagate!();
+		ParseNodes(gltf, json["nodes"]).GetOrPropagate!();
+		ParseScenes(gltf, json["scenes"]).GetOrPropagate!();
+
+		if (json.Contains("scene"))
+			gltf.scene = gltf.scenes[(.) json["scene"].AsNumber];
+
+		return gltf;
 	}
 
-	public enum CameraType : c_int {
-		Invalid,
-		Perspective,
-		Orthographics
-	}
+	[Profile]
+	private static Result<void> ParseGlb(FileStream fs, ref JsonTree tree, ref uint8[] binaryChunk) {
+		uint32 magic = fs.Read<uint32>().GetOrPropagate!();
+		uint32 version = fs.Read<uint32>().GetOrPropagate!();
+		fs.Read<uint32>().GetOrPropagate!(); // length
 
-	[CRepr]
-	public struct CameraPerspective {
-		public int32 hasAspectRatio;
-		public float aspectRaio;
-		public float yfov;
-		public c_int hasZfar;
-		public float zfar;
-		public float znear;
-		public Extras extras;
-	}
+		if (magic != 0x46546C67) return .Err;
+		if (version != 2) return .Err;
 
-	[CRepr]
-	public struct CameraOrthographic {
-		public float xmag;
-		public float ymag;
-		public float zfar;
-		public float znear;
-		public Extras extras;
-	}
+		// JSON chunk
+		{
+			uint32 chunkLength = fs.Read<uint32>().GetOrPropagate!();
+			uint32 chunkType = fs.Read<uint32>().GetOrPropagate!();
 
-	[CRepr, Union]
-	public struct CameraData {
-		public CameraPerspective perspective;
-		public CameraOrthographic orthographic;
-	}
+			if (chunkType != 0x4E4F534A) return .Err;
 
-	[CRepr]
-	public struct Camera {
-		public char8* name;
-		public CameraType type;
-		public CameraData data;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	public enum LightType : c_int {
-		Invalid,
-		Directional,
-		Point,
-		Spot
-	}
-
-	[CRepr]
-	public struct Light {
-		public char8* name;
-		public float[3] color;
-		public float intensity;
-		public LightType type;
-		public float range;
-		public float spotInnerConeAngle;
-		public float spotOuterConeAngle;
-		public Extras extras;
-	}
-
-	[CRepr]
-	public struct MeshGpuInstancing {
-		public BufferView* bufferView;
-		public Attribute* attributes;
-		public c_size attributesCount;
-	}
-
-	[CRepr]
-	public struct Node {
-		public char8* name;
-		public Node* parent;
-		public Node** children;
-		public c_size childrenCount;
-		public Skin* skin;
-		public Mesh* mesh;
-		public Camera* camera;
-		public Light* light;
-		public float* weights;
-		public c_size weightsCount;
-		public c_int hasTranslation;
-		public c_int hasRotation;
-		public c_int hasScale;
-		public c_int hasMatrix;
-		public float[3] translation;
-		public float[4] rotation;
-		public float[3] scale;
-		public float[16] matrix;
-		public Extras extras;
-		public c_int hasMeshGpuInstancing;
-		public MeshGpuInstancing meshGpuInstancing;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct Skin {
-		public char8* name;
-		public Node** joints;
-		public c_size jointsCount;
-		public Node* skeleton;
-		public Accessor* inverseBindMatrices;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct Scene {
-		public char8* name;
-		public Node** nodes;
-		public c_size nodesCount;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	public enum InterpolationType {
-		Linear,
-		Step,
-		CubicSpline
-	}
-
-	[CRepr]
-	public struct AnimationSampler {
-		public Accessor* input;
-		public Accessor* output;
-		public InterpolationType interpolation;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	public enum AnimationPathType {
-		Invalid,
-		Translation,
-		Rotation,
-		Scale,
-		Weights
-	}
-
-	[CRepr]
-	public struct AnimationChannel {
-		public AnimationSampler* sampler;
-		public Node* targetNode;
-		public AnimationPathType targetPath;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct Animation {
-		public char8* name;
-		public AnimationSampler* samplers;
-		public c_size samplersCount;
-		public AnimationChannel* channels;
-		public c_size channelsCount;
-		public Extras extras;
-		public c_size extensionsCount;
-		public Extension* extensions;
-	}
-
-	[CRepr]
-	public struct MaterialVariant {
-		public char8* name;
-		public Extras extras;
-	}
-
-	[CRepr]
-	public struct Data {
-		public FileType fileType;
-		public void* fileData;
-
-		public Asset asset;
-
-		public Mesh* meshes;
-		public c_size meshesCount;
-
-		public Material* materials;
-		public c_size materialsCount;
-
-		public Accessor* accessors;
-		public c_size accessorsCount;
-
-		public BufferView* bufferViews;
-		public c_size bufferViewsCount;
-
-		public Buffer* buffers;
-		public c_size bufersCount;
-
-		public Image* images;
-		public c_size imagesCount;
-
-		public Texture* textures;
-		public c_size texturesCount;
-
-		public Sampler* samplers;
-		public c_size samplersCount;
-
-		public Skin* skins;
-		public c_size skinsCount;
-
-		public Camera* cameras;
-		public c_size camerasCount;
-
-		public Light* lights;
-		public c_size lightsCount;
-
-		public Node* nodes;
-		public c_size nodesCount;
-
-		public Scene* scenes;
-		public c_size scenesCount;
-
-		public Scene* scene;
-
-		public Animation* animations;
-		public c_size animationsCount;
-
-		public MaterialVariant* variants;
-		public c_size variantsCount;
-
-		public Extras extras;
-
-		public c_size dataExtensionsCount;
-		public Extension* dataExtensions;
-
-		public char8** extensionsUsed;
-		public c_size extensionsUsedCount;
-
-		public char8** extensionsRequired;
-		public c_size extensionsRequiredCount;
-
-		public char8* json;
-		public c_size jsonSize;
-
-		public void* bin;
-		public c_size binSize;
-
-		public MemoryOptions memory;
-		public FileOptions file;
-
-		public Span<Image> Images => .(images, (.) imagesCount);
-		public Span<Texture> Textures => .(textures, (.) texturesCount);
-		public Span<Mesh> Meshes => .(meshes, (.) meshesCount);
-	}
-
-	[LinkName("cgltf_parse_file")]
-	public static extern Result ParseFile(Options* options, char8* path, Data** data);
-
-	[LinkName("cgltf_free")]
-	public static extern void Free(Data* data);
-
-	[LinkName("cgltf_load_buffers")]
-	public static extern Result LoadBuffers(Options* options, Data* data, char8* gltfPath);
-
-	public static Options GetDefaultOptions() {
-		return .() {
-			memory = .() {
-				alloc = => Alloc,
-				free = => Free
+			if (chunkLength % 4 != 0) {
+				Internal.FatalError("");
 			}
-		};
-	}
 
-	private static void* Alloc(void* user, c_size size) => new uint8[size]*;
-	private static void Free(void* user, void* ptr) { delete ptr; }
+			uint8[] chunkData = new .[chunkLength];
+			defer delete chunkData;
 
-	public static Node* GetPerspectiveCameraNode(Data* data) {
-		for (let (node, transform) in scope NodeEnumerator(data, false)) {
-			if (node.camera != null && node.camera.type == .Perspective) {
-				return node;
+			switch (fs.TryRead(chunkData)) {
+			case .Ok(let val):
+				if (val != chunkLength) return .Err;
+			case .Err:
+				return .Err;
+			}
+
+			tree = JsonParser.Parse(scope SpanMemoryStream(chunkData)).GetOrPropagate!();
+		}
+
+		// Binary chunk
+		{
+			uint32 chunkLength = fs.Read<uint32>().GetOrPropagate!();
+			uint32 chunkType = fs.Read<uint32>().GetOrPropagate!();
+
+			if (chunkType != 0x004E4942) return .Err;
+
+			binaryChunk = new .[chunkLength];
+
+			switch (fs.TryRead(binaryChunk)) {
+			case .Ok(let val):
+				if (val != chunkLength) return .Err;
+			case .Err:
+				return .Err;
 			}
 		}
 
-		return null;
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseBuffers(Gltf gltf, Json json, StringView folder, uint8[] binaryChunk) {
+		if (json.IsArray) {
+			gltf.buffers = new .[json.AsArray.Count];
+	
+			for (let bufferJson in json.AsArray) {
+				int length = (.) bufferJson["byteLength"].AsNumber;
+				Buffer buffer = new .(length);
+
+				if (bufferJson.Contains("uri")) {
+					StringView input = bufferJson["uri"].AsString;
+	
+					if (input.StartsWith("data:")) {
+						input = input.Substring(bufferJson["uri"].AsString.IndexOf(',') + 1);
+		
+						if (Base64.Decode(input, buffer.data) case .Err) {
+							delete buffer;
+							return .Err;
+						}
+					}
+					else {
+						StringView path = Path.InternalCombine(.. scope .(), folder, input);
+	
+						if (File.ReadAll(path, buffer.data) case .Err)
+							return .Err;
+					}
+				}
+				else {
+					if (binaryChunk == null || @bufferJson.Index != 0 || length != binaryChunk.Count)
+						return .Err;
+
+					buffer.data.[Friend]mSize += (.) binaryChunk.Count;
+					binaryChunk.CopyTo(buffer.data);
+				}
+	
+				gltf.buffers[@bufferJson.Index] = buffer;
+			}
+		}
+		else {
+			gltf.buffers = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseBufferViews(Gltf gltf, Json json) {
+		if (json.IsArray) {
+			gltf.bufferViews = new .[json.AsArray.Count];
+	
+			for (let viewJson in json.AsArray) {
+				BufferView view = new .();
+	
+				view.buffer = gltf.buffers[(.) viewJson["buffer"].AsNumber];
+				view.offset = (.) viewJson["byteOffset"].AsNumber;
+				view.length = (.) viewJson["byteLength"].AsNumber;
+	
+				gltf.bufferViews[@viewJson.Index] = view;
+			}
+		}
+		else {
+			gltf.bufferViews = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseAccessors(Gltf gltf, Json json) {
+		if (json.IsArray) {
+			gltf.accessors = new .[json.AsArray.Count];
+	
+			for (let accessorJson in json.AsArray) {
+				Accessor accessor = new .();
+	
+				accessor.view = gltf.bufferViews[(.) accessorJson["bufferView"].AsNumber];
+	
+				switch ((int) accessorJson["componentType"].AsNumber) {
+				case 5120:	accessor.componentType = .I8;
+				case 5121:	accessor.componentType = .U8;
+				case 5122:	accessor.componentType = .U16;
+				case 5123:	accessor.componentType = .I16;
+				case 5125:	accessor.componentType = .U32;
+				case 5126:	accessor.componentType = .F32;
+				}
+	
+				accessor.count = (.) accessorJson["count"].AsNumber;
+	
+				switch (accessorJson["type"].AsString) {
+				case "SCALAR":	accessor.type = .Scalar;
+				case "VEC2":	accessor.type = .Vec2;
+				case "VEC3":	accessor.type = .Vec3;
+				case "VEC4":	accessor.type = .Vec4;
+				case "MAT2":	accessor.type = .Mat2;
+				case "MAT3":	accessor.type = .Mat3;
+				case "MAT4":	accessor.type = .Mat4;
+				}
+	
+				gltf.accessors[@accessorJson.Index] = accessor;
+			}
+		}
+		else {
+			gltf.accessors = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseImages(Gltf gltf, Json json, StringView folder) {
+		if (json.IsArray) {
+			gltf.images = new .[json.AsArray.Count];
+	
+			for (let imageJson in json.AsArray) {
+				Image image = new .(imageJson["name"].AsString);
+	
+				int32 width = 0;
+				int32 height = 0;
+				ColorComponents comp = .Default;
+	
+				if (imageJson.Contains("bufferView")) {
+					BufferView view = gltf.bufferViews[(.) imageJson["bufferView"].AsNumber];
+	
+					image.data = ImageResult.RawFromStream(scope SpanMemoryStream(view.Span), .RedGreenBlueAlpha, out width, out height, out comp);
+				}
+				else if (imageJson.Contains("uri")) {
+					StringView path = Path.InternalCombine(.. scope .(), folder, imageJson["uri"].AsString);
+
+					FileStream fs = scope .();
+
+					if (fs.Open(path, .Read, .Read) case .Err)
+						return .Err;
+					
+					image.data = ImageResult.RawFromStream(fs, .RedGreenBlueAlpha, out width, out height, out comp);
+				}
+				else {
+					return .Err;
+				}
+	
+				if (image.data == null) {
+					delete image;
+					return .Err;
+				}
+
+				image.width = width;
+				image.height = height;
+	
+				gltf.images[@imageJson.Index] = image;
+			}
+		}
+		else {
+			gltf.images = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseSamplers(Gltf gltf, Json json) {
+		if (json.IsArray) {
+			gltf.samplers = new .[json.AsArray.Count];
+	
+			for (let samplerJson in json.AsArray) {
+				Sampler sampler = new .();
+	
+				if (samplerJson.Contains("magFilter")) {
+					switch ((int) samplerJson["magFilter"].AsNumber) {
+					case 9728:	sampler.mag = .Nearest;
+					case 9729:	sampler.mag = .Linear;
+					}
+				}
+	
+				if (samplerJson.Contains("minFilter")) {
+					switch ((int) samplerJson["minFilter"].AsNumber) {
+					case 9728:	sampler.min = .Nearest;
+					case 9729:	sampler.min = .Linear;
+					case 9984:	sampler.min = .NearestMipmapNearest;
+					case 9985:	sampler.min = .LinearMipmapNearest;
+					case 9986:	sampler.min = .NearestMipmapLinear;
+					case 9987:	sampler.min = .LinearMipmapLinear;
+					}
+				}
+	
+				if (samplerJson.Contains("wrapS")) {
+					switch ((int) samplerJson["wrapS"].AsNumber) {
+					case 33071:	sampler.wrapS = .ClampToEdge;
+					case 33648:	sampler.wrapS = .MirroredRepeat;
+					case 10497:	sampler.wrapS = .Repeat;
+					}
+				}
+	
+				if (samplerJson.Contains("wrapT")) {
+					switch ((int) samplerJson["wrapT"].AsNumber) {
+					case 33071:	sampler.wrapT = .ClampToEdge;
+					case 33648:	sampler.wrapT = .MirroredRepeat;
+					case 10497:	sampler.wrapT = .Repeat;
+					}
+				}
+	
+				gltf.samplers[@samplerJson.Index] = sampler;
+			}
+		}
+		else {
+			gltf.samplers = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseTextures(Gltf gltf, Json json) {
+		if (json.IsArray) {
+			gltf.textures = new .[json.AsArray.Count];
+	
+			for (let textureJson in json.AsArray) {
+				Texture texture = new .();
+	
+				texture.image = gltf.images[(.) textureJson["source"].AsNumber];
+				texture.sampler = gltf.samplers[(.) textureJson["sampler"].AsNumber];
+	
+				gltf.textures[@textureJson.Index] = texture;
+			}
+		}
+		else {
+			gltf.textures = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseMaterials(Gltf gltf, Json json) {
+		if (json.IsArray) {
+			gltf.materials = new .[json.AsArray.Count];
+	
+			for (let materialJson in json.AsArray) {
+				Material material = new .(materialJson["name"].AsString);
+	
+				// PBR metallic roughness
+				if (materialJson.Contains("pbrMetallicRoughness")) {
+					Json j = materialJson["pbrMetallicRoughness"];
+					PbrMetallicRoughness v = .();
+	
+					GetTexture(gltf, j, "baseColorTexture", out v.baseColorTexture);
+					GetTexture(gltf, j, "metallicRoughnessTexture", out v.metallicRoughnessTexture);
+	
+					GetVec(j, "baseColorFactor", out v.baseColorFactor, .(1));
+					GetFloat(j, "metallicFactor", out v.metallicFactor, 1);
+					GetFloat(j, "roughnessFactor", out v.roughnessFactor, 1);
+	
+					material.pbrMetallicRoughness = v;
+				}
+	
+				// Emission
+				Emission GetEmission() {
+					if (!material.emission.HasValue) {
+						material.emission = .() {
+							texture = null,
+							factor = .(1),
+							strength = 1
+						};
+					}
+	
+					return material.emission.Value;
+				}
+	
+				if (materialJson.Contains("emissiveTexture")) {
+					Emission v = GetEmission();
+	
+					GetTexture(gltf, materialJson, "emissiveTexture", out v.texture);
+	
+					material.emission = v;
+				}
+	
+				if (materialJson.Contains("emissiveFactor")) {
+					Emission v = GetEmission();
+	
+					GetVec<3>(materialJson, "emissiveFactor", out v.factor, .(1));
+					
+					material.emission = v;
+				}
+	
+				// Other textures
+				GetTexture(gltf, materialJson, "normalTexture", out material.normalTexture);
+				GetTexture(gltf, materialJson, "occlusionTexture", out material.occlusionTexture);
+	
+				// Extensions
+				if (materialJson.Contains("extensions")) {
+					for (let (name, j) in materialJson["extensions"].AsObject) {
+						switch (name.String) {
+						// Specular
+						case "KHR_materials_specular":
+							Specular v = .();
+	
+							GetTexture(gltf, j, "specularTexture", out v.texture);
+							GetTexture(gltf, j, "specularColorTexture", out v.colorTexture);
+	
+							GetFloat(j, "specularFactor", out v.factor, 1);
+							GetVec<3>(j, "specularColorFactor", out v.colorFactor, .(1));
+	
+							material.specular = v;
+	
+						// Clearcoat
+						case "KHR_materials_clearcoat":
+							Clearcoat v = .();
+	
+							GetTexture(gltf, j, "clearcoatTexture", out v.texture);
+							GetTexture(gltf, j, "clearcoatRoughnessTexture", out v.roughnessTexture);
+							GetTexture(gltf, j, "clearcoatNormalTexture", out v.normalTexture);
+	
+							GetFloat(j, "clearcoatFactor", out v.factor, 1);
+							GetFloat(j, "clearcoatRoughnessFactor", out v.roughnessFactor, 1);
+								
+							material.clearcoat = v;
+	
+						// IOR
+						case "KHR_materials_ior":
+							Ior v = .();
+	
+							GetFloat(j, "ior", out v.ior, 1.5f);
+	
+							material.ior = v;
+	
+						// Emissive strength
+						case "KHR_materials_emissive_strength":
+							Emission v = GetEmission();
+	
+							GetFloat(j, "emissiveStrength", out v.strength, 1);
+	
+							material.emission = v;
+						}
+					}
+				}
+	
+				gltf.materials[@materialJson.Index] = material;
+			}
+		}
+		else {
+			gltf.materials = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseMeshes(Gltf gltf, Json json) {
+		if (json.IsArray) {
+			gltf.meshes = new .[json.AsArray.Count];
+	
+			for (let meshJson in json.AsArray) {
+				Mesh mesh = new .(meshJson["name"].AsString, meshJson["primitives"].AsArray.Count);
+	
+				for (let primitiveJson in meshJson["primitives"].AsArray) {
+					Primitive primitive = new .(primitiveJson["attributes"].AsObject.Count);
+	
+					for (let (name, index) in primitiveJson["attributes"].AsObject) {
+						primitive.attributes[new .(name)] = gltf.accessors[(.) index.AsNumber];
+					}
+	
+					GetRef(gltf.accessors, primitiveJson, "indices", out primitive.indices);
+					GetRef(gltf.materials, primitiveJson, "material", out primitive.material);
+	
+					int modeI;
+					GetInt(primitiveJson, "mode", out modeI, 4);
+					primitive.mode = (.) modeI;
+	
+					mesh.primitives[@primitiveJson.Index] = primitive;
+				}
+	
+				gltf.meshes[@meshJson.Index] = mesh;
+			}
+		}
+		else {
+			gltf.meshes = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseCameras(Gltf gltf, Json json) {
+		if (json.IsArray) {
+			gltf.cameras = new .[json.AsArray.Count];
+	
+			for (let cameraJson in json.AsArray) {
+				if (cameraJson["type"].AsString != "perspective") continue;
+	
+				Json j = cameraJson["perspective"];
+				Camera camera = new .(cameraJson["name"].AsString);
+	
+				GetDouble(j, "aspectRatio", out camera.aspectRatio, 0);
+				GetDouble(j, "yfov", out camera.yFov, 0);
+				GetDouble(j, "zfar", out camera.zFar, 0);
+				GetDouble(j, "znear", out camera.zNear, 0);
+	
+				gltf.cameras[@cameraJson.Index] = camera;
+			}
+		}
+		else {
+			gltf.cameras = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseNodes(Gltf gltf, Json json) {
+		if (json.IsArray) {
+			gltf.nodes = new .[json.AsArray.Count];
+	
+			for (let nodeJson in json.AsArray) {
+				int childrenCount = 0;
+	
+				if (nodeJson.Contains("children")) {
+					childrenCount = nodeJson["children"].AsArray.Count;
+				}
+	
+				Node node = new .(nodeJson["name"].AsString, childrenCount);
+	
+				if (nodeJson.Contains("translation")) {
+					Json j = nodeJson["translation"];
+					node.translation = .(j[0].AsNumber, j[1].AsNumber, j[2].AsNumber);
+				}
+	
+				if (nodeJson.Contains("rotation")) {
+					Json j = nodeJson["rotation"];
+					node.rotation = .((.) j[0].AsNumber, (.) j[1].AsNumber, (.) j[2].AsNumber, (.) j[3].AsNumber);
+				}
+	
+				if (nodeJson.Contains("scale")) {
+					Json j = nodeJson["scale"];
+					node.scale = .(j[0].AsNumber, j[1].AsNumber, j[2].AsNumber);
+				}
+				else {
+					node.scale = .(1);
+				}
+	
+				GetRef(gltf.cameras, nodeJson, "camera", out node.camera);
+				GetRef(gltf.meshes, nodeJson, "mesh", out node.mesh);
+	
+				gltf.nodes[@nodeJson.Index] = node;
+			}
+	
+			// Children
+			for (let nodeJson in json.AsArray) {
+				Node node = gltf.nodes[@nodeJson.Index];
+	
+				if (nodeJson.Contains("children")) {
+					for (let childJson in nodeJson["children"].AsArray) {
+						node.children[@childJson.Index] = gltf.nodes[(.) childJson.AsNumber];
+					}
+				}
+			}
+		}
+		else {
+			gltf.nodes = new .[0];
+		}
+
+		return .Ok;
+	}
+	
+	[Profile]
+	private static Result<void> ParseScenes(Gltf gltf, Json json) {
+		if (json.IsArray) {
+			gltf.scenes = new .[json.AsArray.Count];
+	
+			for (let sceneJson in json.AsArray) {
+				int nodeCount = 0;
+				
+				if (sceneJson.Contains("nodes")) {
+					nodeCount = sceneJson["nodes"].AsArray.Count;
+				}
+	
+				Scene scene = new .(sceneJson["name"].AsString, nodeCount);
+	
+				if (sceneJson.Contains("nodes")) {
+					for (let nodeJson in sceneJson["nodes"].AsArray) {
+						scene.nodes[@nodeJson.Index] = gltf.nodes[(.) nodeJson.AsNumber];
+					}
+				}
+				else {
+					scene.nodes = new .[0];
+				}
+	
+				gltf.scenes[@sceneJson.Index] = scene;
+			}
+		}
+		else {
+			gltf.scenes = new .[0];
+		}
+
+		return .Ok;
 	}
 
-	public class NodeEnumerator : IEnumerator<(Node*, MeshTransform)> {
+	private static void GetInt(Json json, StringView name, out int v, int defaultValue) {
+		if (json.Contains(name)) {
+			v = (.) json[name].AsNumber;
+		}
+		else {
+			v = defaultValue;
+		}
+	}
+
+	private static void GetFloat(Json json, StringView name, out float v, float defaultValue) {
+		if (json.Contains(name)) {
+			v = (.) json[name].AsNumber;
+		}
+		else {
+			v = defaultValue;
+		}
+	}
+
+	private static void GetDouble(Json json, StringView name, out double v, double defaultValue) {
+		if (json.Contains(name)) {
+			v = json[name].AsNumber;
+		}
+		else {
+			v = defaultValue;
+		}
+	}
+
+	private static void GetVec<C>(Json json, StringView name, out Vec<float, C> v, Vec<float, C> defaultValue) where C : const int {
+		if (json.Contains(name)) {
+			float[C] values = ?;
+	
+			for (let valueJson in json[name].AsArray) {
+				values[@valueJson.Index] = (.) valueJson.AsNumber;
+			}
+	
+			v = .(values);
+		}
+		else {
+			v = defaultValue;
+		}
+	}
+
+	private static void GetTexture(Gltf gltf, Json json, StringView name, out Texture v) {
+		if (json.Contains(name)) {
+			v = gltf.textures[(.) json[name]["index"].AsNumber];
+		}
+		else {
+			v = null;
+		}
+	}
+
+	private static void GetRef<T>(T[] array, Json json, StringView name, out T v) where T : class {
+		if (json.Contains(name)) {
+			v = array[(.) json[name].AsNumber];
+		}
+		else {
+			v = null;
+		}
+	}
+
+	public class NodeEnumerator : IEnumerator<(Node, MeshTransform)> {
 		struct Entry {
-			public Node* node;
+			public Node node;
 			public MeshTransform transform;
 
-			public this(Node* node, MeshTransform transform) {
+			public this(Node node, MeshTransform transform) {
 				this.node = node;
 				this.transform = transform;
 			}
 		}
 
-		private Data* data;
 		private bool meshOnly;
 
 		private append List<Entry> entries = .(16);
 
-		public this(Data* data, bool meshOnly) {
-			this.data = data;
+		public this(Scene scene, bool meshOnly) {
 			this.meshOnly = meshOnly;
 
-			for (uint i < data.scene.nodesCount) {
-				Node* node = data.scene.nodes[i];
+			for (let node in scene.nodes) {
 				entries.Add(.(node, .(.ZERO, .(), .(1, 1, 1))));
 			}
 		}
 
-		public Result<(Node*, MeshTransform)> GetNext() {
+		public Result<(Node, MeshTransform)> GetNext() {
 			while (true) {
 				switch (GetNextNode()) {
 				case .Ok(let val):
@@ -794,14 +969,14 @@ static class GLTF {
 			}
 		}
 
-		private Result<(Node*, MeshTransform)> GetNextNode() {
+		private Result<(Node, MeshTransform)> GetNextNode() {
 			if (entries.IsEmpty) return .Err;
 
 			Entry entry = entries.PopBack();
 
-			Vec3f translation = .(entry.node.translation[0], entry.node.translation[1], entry.node.translation[2]);
-			Quaternion rotation = .(entry.node.rotation);
-			Vec3f scale = .(entry.node.scale[0], entry.node.scale[1], entry.node.scale[2]);
+			Vec3f translation = .((.) entry.node.translation.x, (.) entry.node.translation.y, (.) entry.node.translation.z);
+			Quaternion rotation = entry.node.rotation;
+			Vec3f scale = .((.) entry.node.scale.x, (.) entry.node.scale.y, (.) entry.node.scale.z);
 
 			MeshTransform globalTransform = entry.transform;
 
@@ -812,9 +987,8 @@ static class GLTF {
 			globalTransform.directionMatrix = globalTransform.directionMatrix * rotation.Matrix.Transpose();
 			globalTransform.directionMatrix = globalTransform.directionMatrix.Scale(scale);
 
-			for (uint i < entry.node.childrenCount) {
-				Node* node = entry.node.children[i];
-				entries.Add(.(node, globalTransform));
+			for (let child in entry.node.children) {
+				entries.Add(.(child, globalTransform));
 			}
 
 			return (entry.node, globalTransform);

@@ -5,7 +5,7 @@ using Nova.Math;
 namespace Nova.Scene;
 
 [CRepr]
-struct GlobalData {
+struct SceneData {
 	public float widthF, heightF, _0, _1;
 	public uint32 widthI, heightI, _2, _3;
 

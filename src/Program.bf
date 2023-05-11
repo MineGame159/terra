@@ -25,11 +25,8 @@ static class Program {
 
 		GpuSceneBuilder scene = scope .(gpu);
 
-		if (path.EndsWith(".gltf") || path.EndsWith(".glb")) {
-			scope GltfSceneLoader(path).Load(scene);
-		}
-		else {
-			Log.Error("Unknown extension");
+		if (SceneLoaders.Load(scene, path) == .Err) {
+			Log.Error("Failed to load scene");
 			return;
 		}
 

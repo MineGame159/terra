@@ -7,19 +7,19 @@ StartupObject = "Nova.Program"
 DefaultNamespace = "Nova"
 
 [Configs.Debug.Win64]
-LibPaths = ["$(ProjectDir)/libs/OpenImageDenoise.lib", "$(ProjectDir)/libs/cgltf.lib"]
+LibPaths = ["$(ProjectDir)/libs/OpenImageDenoise.lib"]
 PostBuildCmds = ["CopyFilesIfNewer(\"$(ProjectDir)/libs/*.dll\", \"$(TargetDir)\")"]
 VectorizeLoops = true
 VectorizeSLP = true
 
 [Configs.Release.Win64]
-LibPaths = ["$(ProjectDir)/libs/OpenImageDenoise.lib", "$(ProjectDir)/libs/cgltf.lib"]
+LibPaths = ["$(ProjectDir)/libs/OpenImageDenoise.lib"]
 PostBuildCmds = ["CopyFilesIfNewer(\"$(ProjectDir)/libs/*.dll\", \"$(TargetDir)\")"]
 
 [Configs.Paranoid.Win64]
-LibPaths = ["$(ProjectDir)/libs/OpenImageDenoise.lib", "$(ProjectDir)/libs/cgltf.lib"]
+LibPaths = ["$(ProjectDir)/libs/OpenImageDenoise.lib"]
 PostBuildCmds = ["CopyFilesIfNewer(\"$(ProjectDir)/libs/*.dll\", \"$(TargetDir)\")"]
 
 [Configs.Test.Win64]
-LibPaths = ["$(ProjectDir)/libs/OpenImageDenoise.lib", "$(ProjectDir)/libs/cgltf.lib"]
+LibPaths = ["$(ProjectDir)/libs/OpenImageDenoise.lib"]
 PostBuildCmds = ["CopyFilesIfNewer(\"$(ProjectDir)/libs/*.dll\", \"$(TargetDir)\")"]
