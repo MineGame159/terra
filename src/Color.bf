@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova;
+namespace Terra;
 
 [CRepr]
 struct Color {

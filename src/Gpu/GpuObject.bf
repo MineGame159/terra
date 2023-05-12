@@ -3,7 +3,7 @@ using System;
 using Bulkan.Utilities;
 using static Bulkan.Utilities.VulkanMemoryAllocator;
 
-namespace Nova.Gpu;
+namespace Terra.Gpu;
 
 abstract class GpuObject {
 	protected Gpu gpu;

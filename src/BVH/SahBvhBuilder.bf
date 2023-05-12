@@ -1,10 +1,10 @@
 using System;
 using System.Collections;
 
-using Nova.Math;
-using Nova.Profiler;
+using Terra.Math;
+using Terra.Profiler;
 
-namespace Nova.BVH;
+namespace Terra.BVH;
 
 abstract class SahBvhBuilder<T> where T : IPrimitive {
 	protected Span<T> primitives;

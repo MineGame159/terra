@@ -1,7 +1,7 @@
 using System;
 using System.Interop;
 
-namespace Nova;
+namespace Terra;
 
 static class OID {
 	public enum DeviceType : c_int {

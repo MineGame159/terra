@@ -3,7 +3,7 @@ using System;
 using Bulkan;
 using static Bulkan.VulkanNative;
 
-namespace Nova.Gpu;
+namespace Terra.Gpu;
 
 extension Gpu {
 	private VkQueryPool queryPool;

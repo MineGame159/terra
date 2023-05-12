@@ -2,12 +2,12 @@ using System;
 using System.IO;
 using System.Collections;
 
-using Nova.Gpu;
-using Nova.Scene;
-using Nova.Math;
-using Nova.Profiler;
+using Terra.Gpu;
+using Terra.Scene;
+using Terra.Math;
+using Terra.Profiler;
 
-namespace Nova;
+namespace Terra;
 
 static class Program {
 	private const uint8[?] SHADER_DATA = Compiler.ReadBinary("shader/shader.spv");

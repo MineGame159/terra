@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova.Profiler;
+namespace Terra.Profiler;
 
 struct Zone : IDisposable {
 	int64 start;

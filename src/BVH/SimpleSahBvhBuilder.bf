@@ -1,9 +1,9 @@
 using System;
 using System.Collections;
 
-using Nova.Math;
+using Terra.Math;
 
-namespace Nova.BVH;
+namespace Terra.BVH;
 
 class SimpleSahBvhBuilder<T> : SahBvhBuilder<T> where T : IPrimitive {
 	public this(List<T> primitives) : base(primitives) {}

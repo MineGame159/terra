@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace Nova;
+namespace Terra;
 
 class SpanMemoryStream : Stream {
 	Span<uint8> mMemory;

@@ -1,7 +1,7 @@
 using System;
 using System.Collections;
 
-namespace Nova.Profiler;
+namespace Terra.Profiler;
 
 class Location {
 	public String name;

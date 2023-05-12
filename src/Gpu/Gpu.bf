@@ -7,9 +7,9 @@ using Bulkan.Utilities;
 using static Bulkan.VulkanNative;
 using static Bulkan.Utilities.VulkanMemoryAllocator;
 
-using Nova.Profiler;
+using Terra.Profiler;
 
-namespace Nova.Gpu;
+namespace Terra.Gpu;
 
 class Gpu {
 	private const bool VALIDATION =
@@ -343,7 +343,7 @@ class Gpu {
 	[Profile]
 	private Result<void> CreateInstance() {
 		VkApplicationInfo appInfo = .() {
-			pApplicationName = "Nova Renderer",
+			pApplicationName = "Terra Renderer",
 			applicationVersion = Version(0, 1, 0),
 			pEngineName = "Cacti",
 			engineVersion = Version(0, 1, 0),

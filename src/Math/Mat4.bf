@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova.Math;
+namespace Terra.Math;
 
 [Union]
 struct Mat4 : IEquatable, IEquatable<Mat4> {

@@ -1,9 +1,9 @@
 using System;
 using System.Collections;
 
-using Nova.Math;
+using Terra.Math;
 
-namespace Nova.BVH;
+namespace Terra.BVH;
 
 class BVH {
 	[CRepr]

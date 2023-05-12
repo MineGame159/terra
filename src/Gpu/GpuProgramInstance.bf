@@ -4,9 +4,9 @@ using Bulkan;
 using Bulkan.Utilities;
 using static Bulkan.VulkanNative;
 
-using Nova.Profiler;
+using Terra.Profiler;
 
-namespace Nova.Gpu;
+namespace Terra.Gpu;
 
 class GpuProgramInstance : GpuObject {
 	private GpuProgram program;

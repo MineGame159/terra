@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova.Scene;
+namespace Terra.Scene;
 
 interface ISceneLoader {
 	Result<void> Load(ISceneBuilder scene);

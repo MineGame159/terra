@@ -1,11 +1,11 @@
 using System;
 using System.Collections;
 
-using Nova.Gpu;
-using Nova.Math;
-using Nova.Profiler;
+using Terra.Gpu;
+using Terra.Math;
+using Terra.Profiler;
 
-namespace Nova.Scene.Loaders;
+namespace Terra.Scene.Loaders;
 
 class GltfSceneLoader : ISceneLoader {
 	private append String path = .();

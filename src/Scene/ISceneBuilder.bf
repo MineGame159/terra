@@ -1,9 +1,9 @@
 using System;
 
-using Nova.Gpu;
-using Nova.Math;
+using Terra.Gpu;
+using Terra.Math;
 
-namespace Nova.Scene;
+namespace Terra.Scene;
 
 struct SceneStats {
 	public int sphereCount;

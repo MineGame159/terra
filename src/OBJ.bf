@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Collections;
 
-namespace Nova;
+namespace Terra;
 
 /*class OBJ : IEnumerable<Part> {
 	public struct Triangle : this(uint32 i1, uint32 i2, uint32 i3) {}

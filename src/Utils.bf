@@ -1,9 +1,9 @@
 using System;
 using System.Diagnostics;
 
-using Nova.Math;
+using Terra.Math;
 
-namespace Nova;
+namespace Terra;
 
 static class Utils {
 	private static MyRandom RANDOM = new .() ~ delete _;

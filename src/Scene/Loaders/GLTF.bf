@@ -5,11 +5,11 @@ using System.Collections;
 using StbImageBeef;
 using Hebron.Runtime;
 
-using Nova.Math;
-using Nova.Json;
-using Nova.Profiler;
+using Terra.Math;
+using Terra.Json;
+using Terra.Profiler;
 
-namespace Nova.Scene.Loaders;
+namespace Terra.Scene.Loaders;
 
 class Gltf {
 	public Buffer[] buffers ~ DeleteContainerAndItems!(_);

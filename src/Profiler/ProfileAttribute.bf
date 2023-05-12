@@ -1,7 +1,7 @@
 using System;
 using System.Reflection;
 
-namespace Nova.Profiler;
+namespace Terra.Profiler;
 
 [AttributeUsage(.Method)]
 struct ProfileAttribute : Attribute, IOnMethodInit {
@@ -15,9 +15,9 @@ struct ProfileAttribute : Attribute, IOnMethodInit {
 	public void OnMethodInit(MethodInfo methodInfo, Self* prev) {
 		Compiler.EmitMethodEntry(methodInfo, """
 			static uint16 __locationI = 0;
-			if (__locationI == 0) __locationI = Nova.Profiler.Locations.Create();
+			if (__locationI == 0) __locationI = Terra.Profiler.Locations.Create();
 
-			Nova.Profiler.Zone __zone = .(__locationI);
+			Terra.Profiler.Zone __zone = .(__locationI);
 			""");
 
 		if (dispose) {

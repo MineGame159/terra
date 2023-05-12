@@ -1,7 +1,7 @@
 using System;
 using System.Collections;
 
-namespace Nova.Json;
+namespace Terra.Json;
 
 enum JsonType {
 	Null,

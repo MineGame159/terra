@@ -1,8 +1,8 @@
 using System;
 
-using Nova.Math;
+using Terra.Math;
 
-namespace Nova;
+namespace Terra;
 
 enum ToneMappingOperator {
 	None,

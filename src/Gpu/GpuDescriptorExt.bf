@@ -4,7 +4,7 @@ using System.Collections;
 using Bulkan;
 using static Bulkan.VulkanNative;
 
-namespace Nova.Gpu;
+namespace Terra.Gpu;
 
 enum ResourceType {
 	case UniformBuffer, StorageBuffer, Image;

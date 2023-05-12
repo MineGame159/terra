@@ -5,7 +5,7 @@ using Bulkan.Utilities;
 using static Bulkan.VulkanNative;
 using static Bulkan.Utilities.VulkanMemoryAllocator;
 
-namespace Nova.Gpu;
+namespace Terra.Gpu;
 
 enum GpuImageFormat {
 	case RGBA8u, RGBA32f;

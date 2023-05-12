@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova;
+namespace Terra;
 
 // https://prng.di.unimi.it/xoshiro128plus.c
 class MyRandom {

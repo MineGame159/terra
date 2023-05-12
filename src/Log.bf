@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova;
+namespace Terra;
 
 enum LogLevel {
 	case Debug, Info, Warning, Error;

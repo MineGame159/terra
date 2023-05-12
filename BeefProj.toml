@@ -2,9 +2,9 @@ FileVersion = 1
 Dependencies = {corlib = "*", MiniZ = "*", Bulkan = "*", "Bulkan.Utilities" = "*", StbImageBeef = "*"}
 
 [Project]
-Name = "nova"
-StartupObject = "Nova.Program"
-DefaultNamespace = "Nova"
+Name = "Terra"
+StartupObject = "Terra.Program"
+DefaultNamespace = "Terra"
 
 [Configs.Debug.Win64]
 LibPaths = ["$(ProjectDir)/libs/OpenImageDenoise.lib"]

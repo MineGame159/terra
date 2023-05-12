@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova.Math;
+namespace Terra.Math;
 
 #region Base struct
 

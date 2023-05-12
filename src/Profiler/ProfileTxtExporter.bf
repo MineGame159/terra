@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Collections;
 
-namespace Nova.Profiler;
+namespace Terra.Profiler;
 
 static class ProfileTxtExporter {
 	private static String str = new .(256) ~ delete _;

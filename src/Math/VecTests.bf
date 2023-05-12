@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova.Math.Tests;
+namespace Terra.Math.Tests;
 
 static class VecTests {
 	private static Vec3f VEC = .(1, 2, 3);

@@ -1,12 +1,12 @@
 using System;
 using System.Collections;
 
-using Nova.Gpu;
-using Nova.BVH;
-using Nova.Math;
-using Nova.Profiler;
+using Terra.Gpu;
+using Terra.BVH;
+using Terra.Math;
+using Terra.Profiler;
 
-namespace Nova.Scene;
+namespace Terra.Scene;
 
 class GpuSceneBuilder : ISceneBuilder {
 	private Gpu gpu;

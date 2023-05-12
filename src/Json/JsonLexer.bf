@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace Nova.Json;
+namespace Terra.Json;
 
 enum JsonToken {
 	case LeftBrace;

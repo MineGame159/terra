@@ -1,8 +1,8 @@
 using System;
 
-using Nova.Math;
+using Terra.Math;
 
-namespace Nova.Scene;
+namespace Terra.Scene;
 
 struct MeshTransform {
 	public Mat4 originMatrix;

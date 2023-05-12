@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova.Json;
+namespace Terra.Json;
 
 class JsonTree {
 	private BumpAllocator alloc = new .();

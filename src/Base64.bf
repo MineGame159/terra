@@ -1,7 +1,7 @@
 using System;
 using System.Collections;
 
-namespace Nova;
+namespace Terra;
 
 // Adapted from https://github.com/beefytech/Beef/pull/1699
 public static class Base64

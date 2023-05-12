@@ -1,8 +1,8 @@
 using System;
 
-using Nova.Math;
+using Terra.Math;
 
-namespace Nova.BVH;
+namespace Terra.BVH;
 
 interface IPrimitive {
 	Vec3f Center { get; }

@@ -4,9 +4,9 @@ using System.Collections;
 
 using MiniZ;
 
-using Nova.Profiler;
+using Terra.Profiler;
 
-namespace Nova;
+namespace Terra;
 
 class Image {
 	public int width, height;

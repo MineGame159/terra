@@ -1,9 +1,9 @@
 using System;
 
-using Nova.BVH;
-using Nova.Math;
+using Terra.BVH;
+using Terra.Math;
 
-namespace Nova.Scene;
+namespace Terra.Scene;
 
 [CRepr]
 struct Sphere : this(Vec3f center, float radius, uint32[4] data), IPrimitive {

@@ -1,6 +1,6 @@
 using System;
 
-namespace Nova.Json;
+namespace Terra.Json;
 
 enum OwnableString : IEquatable<Self>, IEquatable<StringView>, IEquatable<String>, IEquatable, IHashable, IDisposable {
 	case View(StringView string);
