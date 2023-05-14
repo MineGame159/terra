@@ -25,7 +25,12 @@ void Main(uint3 id: SV_DispatchThreadID) {
 
     // Trace
     let ray = GetCamera().GetRay(uv);
-    var color = RayColor(rngState, ray);
+
+#ifdef TRIANGLES_ONLY
+    var color = RayColor<TriangleScene>(rngState, ray);
+#else
+    var color = RayColor<SphereTriangleScene>(rngState, ray);
+#endif
 
     // Blend color with previous sample
     let weight = 1.0 / (sample + 1);
@@ -35,24 +40,42 @@ void Main(uint3 id: SV_DispatchThreadID) {
     output[id.xy] = float4(color, 0);
 }
 
-float3 RayColor(inout uint rngState, Ray ray) {
+interface IScene {
+    static Hit Intersects(Ray ray);
+}
+
+struct SphereTriangleScene : IScene {
+    static Hit Intersects(Ray ray) {
+        var hit = Hit.Far();
+
+        IntersectsBLAS(sphereBvh, spherePrimitives, ray, 0).CompareWith(hit);
+        IntersectsTLAS(meshInstanceBvh, meshInstancePrimitives, ray, 0).CompareWith(hit);
+
+        return hit;
+    }
+};
+
+struct TriangleScene : IScene {
+    static Hit Intersects(Ray ray) {
+        return IntersectsTLAS(meshInstanceBvh, meshInstancePrimitives, ray, 0);
+    }
+};
+
+float3 RayColor<T : IScene>(inout uint rngState, Ray ray) {
     var pathColor = float3(1);
     var incomingLight = float3(0);
 
     for (int i = 0; i < MAX_BOUNCES; i++) {
-        var hit = Hit.Far();
-        
-        IntersectsBVH(sphereBvh, spherePrimitives, ray, 0).CompareWith(hit);
-        IntersectsBVH(meshInstanceBvh, meshInstancePrimitives, ray, 0).CompareWith(hit);
-        
+        let hit = T.Intersects(ray);
+
         if (!hit.didHit) {
             incomingLight += pathColor * GetBackgroundColor(ray);
             break;
         }
-        
+
         let emitted = hit.material.Emitted(hit.uv);
         incomingLight += pathColor * emitted;
-        
+
         let attenuation = hit.material.Scatter(rngState, hit.point, ray.direction, hit.normal, hit.uv, ray);
 
         // Russian roulette

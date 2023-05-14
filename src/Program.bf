@@ -10,7 +10,8 @@ using Terra.Profiler;
 namespace Terra;
 
 static class Program {
-	private const uint8[?] SHADER_DATA = Compiler.ReadBinary("shader/shader.spv");
+	private const uint8[?] SHADER_GENERIC_DATA = Compiler.ReadBinary("shader/out/generic.spv");
+	private const uint8[?] SHADER_TRIANGLES_DATA = Compiler.ReadBinary("shader/out/triangles.spv");
 
 	const int SIZE = 8;
 
@@ -68,7 +69,12 @@ static class Program {
 		GpuImage image2 = gpu.CreateImage(.RGBA32f, input.width, input.height, false);
 
 		// Create program and instance
-		GpuProgram program = gpu.CreateProgram(SHADER_DATA, sizeof(uint32), .UniformBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .SampledImageArray(scene.TextureCount), .Image, .Image);
+		Span<uint8> shaderData;
+
+		if (scene.Stats.sphereCount > 0) shaderData = SHADER_GENERIC_DATA;
+		else shaderData = SHADER_TRIANGLES_DATA;
+
+		GpuProgram program = gpu.CreateProgram(shaderData, sizeof(uint32), .UniformBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .StorageBuffer, .SampledImageArray(scene.TextureCount), .Image, .Image);
 
 		GpuProgramInstance instance1 = program.CreateInstance(globalDataBuffer, sphereBvhBuffer, spherePrimitivesBuffer, triangleBvhBuffer, trianglePrimitivesBuffer, meshInstanceBvhBuffer, meshInstancePrimitivesBuffer, materialsBuffer, textures, image1, image2);
 		GpuProgramInstance instance2 = program.CreateInstance(globalDataBuffer, sphereBvhBuffer, spherePrimitivesBuffer, triangleBvhBuffer, trianglePrimitivesBuffer, meshInstanceBvhBuffer, meshInstancePrimitivesBuffer, materialsBuffer, textures, image2, image1);

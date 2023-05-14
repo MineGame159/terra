@@ -3,8 +3,14 @@ import ray;
 import material;
 import aabb;
 
-interface IPrimitive {
+interface ITLASPrimitive {
     Hit Intersects(Ray ray);
+}
+
+interface IBLASPrimitve {
+    bool Intersects(Ray ray, inout float4 data);
+
+    Hit GetHit(Ray ray, float4 data);
 }
 
 struct Sphere {
