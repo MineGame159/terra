@@ -12,7 +12,10 @@ class GltfSceneLoader : ISceneLoader {
 
 	private append Dictionary<Gltf.Image, uint32> imageIds = .();
 	private append Dictionary<Gltf.Texture, uint32> textureIds = .();
+	private append Dictionary<Gltf.Material, uint32> materialIds = .();
 	private append Dictionary<Gltf.Mesh, uint32> meshIds = .();
+
+	private uint32? defaultMaterialId;
 	
 	public this(StringView path) {
 		this.path.Set(path);
@@ -25,6 +28,7 @@ class GltfSceneLoader : ISceneLoader {
 
 		SetCamera(scene, gltf).GetOrPropagate!();
 		CreateTextures(scene, gltf).GetOrPropagate!();
+		CreateMaterials(scene, gltf).GetOrPropagate!();
 		CreateMeshes(scene, gltf).GetOrPropagate!();
 		AddMeshes(scene, gltf).GetOrPropagate!();
 
@@ -87,6 +91,69 @@ class GltfSceneLoader : ISceneLoader {
 	}
 
 	[Profile]
+	private Result<void> CreateMaterials(ISceneBuilder scene, Gltf gltf) {
+		for (let material in gltf.materials) {
+			Material mat = .();
+
+			mixin GetTextureIndex(Gltf.Texture texture) {
+				uint32 id = 0;
+
+				if (texture != null) {
+					id = textureIds.GetValue(texture).GetOrPropagate!() + 1;
+				}
+
+				id
+			}
+
+			// Metallic / roughness
+			if (material.pbrMetallicRoughness.HasValue) {
+				Gltf.PbrMetallicRoughness v = material.pbrMetallicRoughness.Value;
+
+				mat.albedo = v.baseColorFactor;
+				mat.metallic = v.metallicFactor;
+				mat.roughness = v.roughnessFactor;
+
+				mat.albedoTexture = GetTextureIndex!(v.baseColorTexture);
+				mat.metallicRoughnessTexture = GetTextureIndex!(v.metallicRoughnessTexture);
+			}
+
+			// Specular
+			if (material.specular.HasValue) {
+				mat.specularTint = material.specular.Value.factor;
+			}
+
+			// Emission
+			if (material.emission.HasValue) {
+				Gltf.Emission v = material.emission.Value;
+
+				mat.emission = v.factor * v.strength;
+				mat.emissionTexture = GetTextureIndex!(v.texture);
+			}
+
+			// Clearcoat
+			if (material.clearcoat.HasValue) {
+				Gltf.Clearcoat v = material.clearcoat.Value;
+
+				mat.clearcoat = v.factor;
+				mat.clearcoatRoughness = v.roughnessFactor;
+			}
+
+			// IOR
+			if (material.ior.HasValue) {
+				mat.ior = material.ior.Value.ior;
+			}
+
+			// Normal texture
+			mat.normalTexture = GetTextureIndex!(material.normalTexture);
+
+			// Create
+			materialIds[material] = scene.CreateMaterial(mat);
+		}
+
+		return .Ok;
+	}
+
+	[Profile]
 	private Result<void> CreateMeshes(ISceneBuilder scene, Gltf gltf) {
 		for (let mesh in gltf.meshes) {
 			// Get number of triangles
@@ -105,7 +172,7 @@ class GltfSceneLoader : ISceneLoader {
 				// Loop primitives
 				for (let primitive in mesh.primitives) {
 					// Create material
-					uint32 materialId = CreateMaterial(scene, primitive.material).GetOrPropagate!();
+					uint32 materialId = GetMaterial(scene, primitive.material).GetOrPropagate!();
 
 					// Get attributes
 					Gltf.Accessor positionAttribute = null;
@@ -173,66 +240,21 @@ class GltfSceneLoader : ISceneLoader {
 	}
 
 	[Profile]
-	private Result<uint32> CreateMaterial(ISceneBuilder scene, Gltf.Material material) {
-		Material mat = .();
+	private Result<uint32> GetMaterial(ISceneBuilder scene, Gltf.Material material) {
+		// Default material
+		if (material == null) {
+			if (!defaultMaterialId.HasValue) {
+				Material mat = .();
+				mat.albedo = .(0.8f, 0.8f, 0.8f, 0);
 
-		if (material != null) {
-			mixin GetTextureIndex(Gltf.Texture texture) {
-				uint32 id = 0;
-
-				if (texture != null) {
-					id = textureIds.GetValue(texture).GetOrPropagate!() + 1;
-				}
-
-				id
+				defaultMaterialId = scene.CreateMaterial(mat);
 			}
 
-			// Metallic / roughness
-			if (material.pbrMetallicRoughness.HasValue) {
-				Gltf.PbrMetallicRoughness v = material.pbrMetallicRoughness.Value;
-
-				mat.albedo = v.baseColorFactor;
-				mat.metallic = v.metallicFactor;
-				mat.roughness = v.roughnessFactor;
-
-				mat.albedoTexture = GetTextureIndex!(v.baseColorTexture);
-				mat.metallicRoughnessTexture = GetTextureIndex!(v.metallicRoughnessTexture);
-			}
-
-			// Specular
-			if (material.specular.HasValue) {
-				mat.specularTint = material.specular.Value.factor;
-			}
-
-			// Emission
-			if (material.emission.HasValue) {
-				Gltf.Emission v = material.emission.Value;
-
-				mat.emission = v.factor * v.strength;
-				mat.emissionTexture = GetTextureIndex!(v.texture);
-			}
-
-			// Clearcoat
-			if (material.clearcoat.HasValue) {
-				Gltf.Clearcoat v = material.clearcoat.Value;
-
-				mat.clearcoat = v.factor;
-				mat.clearcoatRoughness = v.roughnessFactor;
-			}
-
-			// IOR
-			if (material.ior.HasValue) {
-				mat.ior = material.ior.Value.ior;
-			}
-
-			// Normal texture
-			mat.normalTexture = GetTextureIndex!(material.normalTexture);
-		}
-		else {
-			mat.albedo = .(0.8f, 0.8f, 0.8f, 0);
+			return defaultMaterialId.Value;
 		}
 
-		return scene.CreateMaterial(mat);
+		// Get from cache
+		return materialIds.GetValue(material);
 	}
 
 	[Profile]
