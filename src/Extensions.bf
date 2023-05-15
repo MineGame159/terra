@@ -2,7 +2,9 @@ namespace System;
 
 extension Result<T> {
 	public mixin GetOrPropagate() {
-		if (this == .Err) return .Err;
+		if (this == .Err)
+			return .Err;
+
 		Value
 	}
 }
