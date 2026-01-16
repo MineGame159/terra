@@ -4,19 +4,13 @@ mod gpu;
 mod scene;
 
 use crate::gpu::{DescriptorInfo, Gpu};
-use crate::scene::{CameraData, Vertex, load_model};
-use glam::{FloatExt, U8Vec3, Vec3, Vec4, uvec2, vec3};
+use crate::scene::{CameraData, SceneBuilder};
+use glam::{FloatExt, U8Vec3, Vec3, Vec4, uvec2, vec3, Mat4};
 use png::{BitDepth, ColorType};
 use smallvec::smallvec;
 use std::fs::File;
 use std::io::BufWriter;
 use std::sync::Arc;
-use vulkano::Packed24_8;
-use vulkano::acceleration_structure::{
-    AccelerationStructureGeometries, AccelerationStructureGeometryInstancesData,
-    AccelerationStructureGeometryInstancesDataType, AccelerationStructureGeometryTrianglesData,
-    AccelerationStructureInstance, GeometryFlags, GeometryInstanceFlags,
-};
 use vulkano::buffer::{BufferContents, BufferUsage, Subbuffer};
 use vulkano::command_buffer::CopyImageToBufferInfo;
 use vulkano::descriptor_set::layout::{DescriptorSetLayout, DescriptorType};
@@ -105,62 +99,10 @@ fn main() {
 
     // Load scene
 
-    let triangles = load_model("models/monkey.glb");
+    let mut scene_builder = SceneBuilder::new();
+    scene_builder.load_model("models/monkey.glb", Mat4::IDENTITY);
 
-    let triangle_buffer = gpu.create_filled_buffer(
-        BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
-            | BufferUsage::SHADER_DEVICE_ADDRESS
-            | BufferUsage::STORAGE_BUFFER,
-        &triangles,
-    );
-
-    let bottom_accel_struct = gpu.execute(|commands| {
-        gpu.create_accel_struct(
-            true,
-            AccelerationStructureGeometries::Triangles(vec![
-                AccelerationStructureGeometryTrianglesData {
-                    flags: GeometryFlags::OPAQUE,
-                    vertex_data: Some(triangle_buffer.clone().into_bytes()),
-                    vertex_stride: size_of::<Vertex>() as u32,
-                    max_vertex: (triangle_buffer.len() * 3 - 1) as u32,
-                    index_data: None,
-                    transform_data: None,
-                    ..AccelerationStructureGeometryTrianglesData::new(Format::R32G32B32_SFLOAT)
-                },
-            ]),
-            commands,
-        )
-    });
-
-    let instance_buffer = gpu.create_filled_buffer(
-        BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
-            | BufferUsage::SHADER_DEVICE_ADDRESS,
-        &[AccelerationStructureInstance {
-            instance_shader_binding_table_record_offset_and_flags: Packed24_8::new(
-                0,
-                GeometryInstanceFlags::TRIANGLE_FACING_CULL_DISABLE.into(),
-            ),
-            acceleration_structure_reference: bottom_accel_struct.device_address().into(),
-            ..Default::default()
-        }],
-    );
-
-    let top_accel_struct = gpu.execute(|commands| {
-        gpu.create_accel_struct(
-            false,
-            AccelerationStructureGeometries::Instances(
-                AccelerationStructureGeometryInstancesData {
-                    flags: GeometryFlags::OPAQUE,
-                    ..AccelerationStructureGeometryInstancesData::new(
-                        AccelerationStructureGeometryInstancesDataType::Values(Some(
-                            instance_buffer,
-                        )),
-                    )
-                },
-            ),
-            commands,
-        )
-    });
+    let scene = scene_builder.build(&gpu);
 
     // Create set
 
@@ -174,8 +116,8 @@ fn main() {
         gpu.set_allocator.clone(),
         set_layout.clone(),
         [
-            WriteDescriptorSet::acceleration_structure(0, top_accel_struct.clone()),
-            WriteDescriptorSet::buffer(1, triangle_buffer),
+            WriteDescriptorSet::acceleration_structure(0, scene.accel_struct.clone()),
+            WriteDescriptorSet::buffer(1, scene.triangle_buffer.clone()),
             WriteDescriptorSet::image_view_with_layout(
                 2,
                 DescriptorImageViewInfo {
