@@ -1,6 +1,7 @@
 use crate::gpu::Gpu;
 use glam::{Mat4, Quat, Vec3, vec4};
 use gltf::Node;
+use gltf::camera::Projection;
 use gltf::mesh::Mode;
 use gltf::mesh::util::ReadIndices;
 use gltf::scene::Transform;
@@ -29,7 +30,7 @@ pub struct Vertex {
 #[repr(transparent)]
 pub struct Triangle(pub [Vertex; 3]);
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct CameraData {
     pub position: Vec3,
     pub look_at: Vec3,
@@ -87,9 +88,10 @@ impl SceneBuilder {
         self.instances.push(Instance { mesh_id, transform });
     }
 
-    pub fn load_model(&mut self, path: impl AsRef<Path>, transform: Mat4) {
+    pub fn load_model(&mut self, path: impl AsRef<Path>, transform: Mat4) -> Option<CameraData> {
         fn load_node(
             buffers: &Vec<gltf::buffer::Data>,
+            camera_data: &mut Option<CameraData>,
             triangles: &mut Vec<Triangle>,
             global_transform: Mat4,
             node: Node,
@@ -108,6 +110,20 @@ impl SceneBuilder {
             };
 
             let transform = global_transform * local_transform;
+
+            if let Some(camera) = node.camera()
+                && camera_data.is_none()
+            {
+                if let Projection::Perspective(perspective) = camera.projection() {
+                    let position = transform.transform_point3(Vec3::ZERO);
+
+                    *camera_data = Some(CameraData {
+                        position,
+                        look_at: position + transform.transform_vector3(Vec3::NEG_Z),
+                        fov: perspective.yfov().to_degrees(),
+                    });
+                }
+            }
 
             if let Some(mesh) = node.mesh() {
                 for primitive in mesh.primitives() {
@@ -151,7 +167,7 @@ impl SceneBuilder {
             }
 
             for child in node.children() {
-                load_node(buffers, triangles, transform, child);
+                load_node(buffers, camera_data, triangles, transform, child);
             }
         }
 
@@ -159,16 +175,25 @@ impl SceneBuilder {
 
         let (document, buffers, _images) = gltf::import(path).unwrap();
 
+        let mut camera_data: Option<CameraData> = None;
         let mut triangles: Vec<Triangle> = vec![];
 
         for node in document.default_scene().unwrap().nodes() {
-            load_node(&buffers, &mut triangles, Mat4::IDENTITY, node);
+            load_node(
+                &buffers,
+                &mut camera_data,
+                &mut triangles,
+                Mat4::IDENTITY,
+                node,
+            );
         }
 
         // Create mesh and add instance
 
         let mesh_id = self.create_mesh(&triangles);
         self.add_instance(mesh_id, transform);
+
+        camera_data
     }
 
     pub fn build(&self, gpu: &Gpu) -> Scene {

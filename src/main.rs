@@ -5,7 +5,7 @@ mod scene;
 
 use crate::gpu::{DescriptorInfo, Gpu};
 use crate::scene::{CameraData, SceneBuilder};
-use glam::{FloatExt, Mat4, U8Vec3, Vec3, Vec4, uvec2, vec3};
+use glam::{FloatExt, Mat4, U8Vec3, Vec3, Vec4, uvec2, vec3, UVec2};
 use kdam::tqdm;
 use png::{BitDepth, ColorType};
 use smallvec::smallvec;
@@ -17,6 +17,7 @@ use vulkano::buffer::{BufferContents, BufferUsage, Subbuffer};
 use vulkano::command_buffer::CopyImageToBufferInfo;
 use vulkano::descriptor_set::layout::{DescriptorSetLayout, DescriptorType};
 use vulkano::descriptor_set::{DescriptorImageViewInfo, DescriptorSet, WriteDescriptorSet};
+use vulkano::DeviceSize;
 use vulkano::format::Format;
 use vulkano::image::{ImageLayout, ImageUsage};
 use vulkano::memory::allocator::MemoryTypeFilter;
@@ -101,15 +102,19 @@ fn main() {
 
     // Load scene
 
+    const SIZE: UVec2 = uvec2(1280, 720);
+    const SAMPLES: u32 = 128;
+    const BOUNCES: u32 = 8;
+
     let mut scene_builder = SceneBuilder::new();
-    scene_builder.load_model("models/monkey.glb", Mat4::IDENTITY);
+    let camera_data = scene_builder.load_model("models/iron_howl_v8.glb", Mat4::IDENTITY);
 
     let scene = scene_builder.build(&gpu);
 
     // Create set
 
     let (image, image_view) = gpu.create_image(
-        uvec2(1280, 720),
+        SIZE,
         Format::R32G32B32A32_SFLOAT,
         ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
     );
@@ -136,16 +141,16 @@ fn main() {
 
     let mut pc = PushConstants {
         camera: Camera::new(
-            CameraData {
-                position: vec3(2.0, 1.0, 2.0),
+            camera_data.unwrap_or(CameraData {
+                position: vec3(5.0, 2.0, 5.0),
                 look_at: Vec3::ZERO,
                 fov: 70.0,
-            },
-            1280.0 / 720.0,
+            }),
+            SIZE.x as f32 / SIZE.y as f32,
         ),
-        width: 1280,
-        height: 720,
-        bounces: 6,
+        width: SIZE.x,
+        height: SIZE.y,
+        bounces: BOUNCES,
         sample: 0,
     };
 
@@ -153,8 +158,6 @@ fn main() {
 
     let start = Instant::now();
     let mut average_duration = Duration::ZERO;
-
-    const SAMPLES: u32 = 64;
 
     for _ in tqdm!(0..SAMPLES) {
         let (_, duration) = gpu.execute(|commands| {
@@ -177,7 +180,7 @@ fn main() {
 
             unsafe {
                 commands
-                    .trace_rays(shader_binding_table.addresses().clone(), [1280, 720, 1])
+                    .trace_rays(shader_binding_table.addresses().clone(), [SIZE.x, SIZE.y, 1])
                     .unwrap();
             }
         });
@@ -200,7 +203,7 @@ fn main() {
     let image_buffer: Subbuffer<[Vec4]> = gpu.create_buffer(
         BufferUsage::TRANSFER_DST,
         MemoryTypeFilter::HOST_RANDOM_ACCESS,
-        1280 * 720,
+        (SIZE.x * SIZE.y) as DeviceSize,
     );
 
     gpu.execute(|commands| {
@@ -221,7 +224,7 @@ fn main() {
     let file = File::create("image.png").unwrap();
     let writer = BufWriter::new(file);
 
-    let mut encoder = png::Encoder::new(writer, 1280, 720);
+    let mut encoder = png::Encoder::new(writer, SIZE.x, SIZE.y);
     encoder.set_color(ColorType::Rgb);
     encoder.set_depth(BitDepth::Eight);
 
