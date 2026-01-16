@@ -3,6 +3,7 @@ use smallvec::smallvec;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use vulkano::acceleration_structure::{
     AccelerationStructure, AccelerationStructureBuildGeometryInfo,
     AccelerationStructureBuildRangeInfo, AccelerationStructureBuildType,
@@ -309,7 +310,7 @@ impl Gpu {
     pub fn execute<T>(
         &self,
         build: impl FnOnce(&mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> T,
-    ) -> T {
+    ) -> (T, Duration) {
         let mut commands = AutoCommandBufferBuilder::primary(
             self.command_allocator.clone(),
             self.queue_family_index.clone(),
@@ -320,6 +321,8 @@ impl Gpu {
         let result = build(&mut commands);
 
         let command_buffer = commands.build().unwrap();
+        
+        let start = Instant::now();
 
         sync::now(self.device.clone())
             .then_execute(self.queue.clone(), command_buffer)
@@ -329,7 +332,9 @@ impl Gpu {
             .wait(None)
             .unwrap();
 
-        result
+        let duration = Instant::now() - start;
+        
+        (result, duration)
     }
 }
 

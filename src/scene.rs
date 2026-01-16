@@ -244,7 +244,7 @@ impl SceneBuilder {
                 .collect::<Vec<AccelerationStructureInstance>>(),
         );
 
-        let accel_struct = gpu.execute(move |commands| {
+        let (accel_struct, _) = gpu.execute(move |commands| {
             gpu.create_accel_struct(
                 false,
                 AccelerationStructureGeometries::Instances(

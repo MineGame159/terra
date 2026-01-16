@@ -10,3 +10,4 @@ glam = { version = "0.30.10", features = ["bytemuck"] }
 gltf = "1.4.1"
 png = "0.18.0"
 bytemuck = "1.24.0"
+kdam = "0.6.4"

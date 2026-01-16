@@ -5,12 +5,14 @@ mod scene;
 
 use crate::gpu::{DescriptorInfo, Gpu};
 use crate::scene::{CameraData, SceneBuilder};
-use glam::{FloatExt, U8Vec3, Vec3, Vec4, uvec2, vec3, Mat4};
+use glam::{FloatExt, Mat4, U8Vec3, Vec3, Vec4, uvec2, vec3};
+use kdam::tqdm;
 use png::{BitDepth, ColorType};
 use smallvec::smallvec;
 use std::fs::File;
 use std::io::BufWriter;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use vulkano::buffer::{BufferContents, BufferUsage, Subbuffer};
 use vulkano::command_buffer::CopyImageToBufferInfo;
 use vulkano::descriptor_set::layout::{DescriptorSetLayout, DescriptorType};
@@ -147,8 +149,15 @@ fn main() {
         sample: 0,
     };
 
-    for _ in 0..64 {
-        gpu.execute(|commands| {
+    println!();
+
+    let start = Instant::now();
+    let mut average_duration = Duration::ZERO;
+
+    const SAMPLES: u32 = 64;
+
+    for _ in tqdm!(0..SAMPLES) {
+        let (_, duration) = gpu.execute(|commands| {
             commands
                 .bind_pipeline_ray_tracing(pipeline.clone())
                 .unwrap();
@@ -173,8 +182,18 @@ fn main() {
             }
         });
 
+        average_duration += duration / SAMPLES;
+
         pc.sample += 1;
     }
+
+    let total = Instant::now() - start;
+
+    println!();
+    println!();
+
+    println!("Total:  {:?}", total);
+    println!("Sample: {:?}", average_duration);
 
     // Copy image to buffer
 
