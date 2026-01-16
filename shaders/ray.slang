@@ -23,7 +23,15 @@ ConstantBuffer<PushConstants> pc;
 
 struct Vertex {
     float3 position;
+    float u;
     float3 normal;
+    float v;
+
+    property float2 uv {
+        get {
+            return float2(u, v);
+        }
+    }
 }
 
 struct Triangle {
@@ -62,10 +70,6 @@ void RayGen() {
     ray.TMax = float.maxValue;
 
     // Trace ray
-
-    RayPayload payload;
-    TraceRay(accelStruct, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
-
     var color = float3(1);
     var light = float3(0);
 
