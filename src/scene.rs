@@ -5,13 +5,13 @@ use gltf::camera::Projection;
 use gltf::mesh::Mode;
 use gltf::mesh::util::ReadIndices;
 use gltf::scene::Transform;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use vulkano::acceleration_structure::{
     AccelerationStructure, AccelerationStructureGeometries,
     AccelerationStructureGeometryInstancesData, AccelerationStructureGeometryInstancesDataType,
     AccelerationStructureGeometryTrianglesData, AccelerationStructureInstance, GeometryFlags,
-    GeometryInstanceFlags,
 };
 use vulkano::buffer::{BufferContents, BufferUsage, Subbuffer};
 use vulkano::format::Format;
@@ -90,9 +90,10 @@ impl SceneBuilder {
 
     pub fn load_model(&mut self, path: impl AsRef<Path>, transform: Mat4) -> Option<CameraData> {
         fn load_node(
+            builder: &mut SceneBuilder,
+            meshes: &mut HashMap<usize, MeshId>,
             buffers: &Vec<gltf::buffer::Data>,
             camera_data: &mut Option<CameraData>,
-            triangles: &mut Vec<Triangle>,
             global_transform: Mat4,
             node: Node,
         ) {
@@ -131,28 +132,28 @@ impl SceneBuilder {
                         continue;
                     }
 
-                    let reader = primitive.reader(move |buffer| Some(&buffers[buffer.index()]));
+                    let mesh_id = meshes.entry(mesh.index()).or_insert_with(|| {
+                        let reader = primitive.reader(move |buffer| Some(&buffers[buffer.index()]));
 
-                    let positions: Vec<Vec3> = reader
-                        .read_positions()
-                        .unwrap()
-                        .map(|pos| transform.transform_point3(Vec3::from_array(pos)))
-                        .collect();
+                        let positions: Vec<Vec3> = reader
+                            .read_positions()
+                            .unwrap()
+                            .map(|pos| (Vec3::from_array(pos)))
+                            .collect();
 
-                    let normals: Vec<Vec3> = reader
-                        .read_normals()
-                        .unwrap()
-                        .map(|normal| transform.transform_vector3(Vec3::from_array(normal)))
-                        .collect();
+                        let normals: Vec<Vec3> = reader
+                            .read_normals()
+                            .unwrap()
+                            .map(|normal| (Vec3::from_array(normal)))
+                            .collect();
 
-                    let indices: Vec<u32> = match reader.read_indices().unwrap() {
-                        ReadIndices::U8(iter) => iter.map(move |i| i as u32).collect(),
-                        ReadIndices::U16(iter) => iter.map(move |i| i as u32).collect(),
-                        ReadIndices::U32(iter) => iter.collect(),
-                    };
+                        let indices: Vec<u32> = match reader.read_indices().unwrap() {
+                            ReadIndices::U8(iter) => iter.map(move |i| i as u32).collect(),
+                            ReadIndices::U16(iter) => iter.map(move |i| i as u32).collect(),
+                            ReadIndices::U32(iter) => iter.collect(),
+                        };
 
-                    triangles.extend(
-                        indices
+                        let triangles: Vec<Triangle> = indices
                             .iter()
                             .map(|i| Vertex {
                                 position: positions[*i as usize],
@@ -161,37 +162,36 @@ impl SceneBuilder {
                                 v: 0.0,
                             })
                             .array_chunks::<3>()
-                            .map(|vertices| Triangle(vertices)),
-                    );
+                            .map(|vertices| Triangle(vertices))
+                            .collect();
+
+                        builder.create_mesh(&triangles)
+                    });
+
+                    builder.add_instance(*mesh_id, transform);
                 }
             }
 
             for child in node.children() {
-                load_node(buffers, camera_data, triangles, transform, child);
+                load_node(builder, meshes, buffers, camera_data, transform, child);
             }
         }
 
-        // Load model triangles
-
         let (document, buffers, _images) = gltf::import(path).unwrap();
 
+        let mut meshes = HashMap::new();
         let mut camera_data: Option<CameraData> = None;
-        let mut triangles: Vec<Triangle> = vec![];
 
         for node in document.default_scene().unwrap().nodes() {
             load_node(
+                self,
+                &mut meshes,
                 &buffers,
                 &mut camera_data,
-                &mut triangles,
                 Mat4::IDENTITY,
                 node,
             );
         }
-
-        // Create mesh and add instance
-
-        let mesh_id = self.create_mesh(&triangles);
-        self.add_instance(mesh_id, transform);
 
         camera_data
     }
@@ -222,7 +222,8 @@ impl SceneBuilder {
                                         .clone()
                                         .slice(
                                             mesh.first_triangle as DeviceSize
-                                                ..mesh.triangle_count as DeviceSize,
+                                                ..mesh.first_triangle
+                                                    + mesh.triangle_count as DeviceSize,
                                         )
                                         .into_bytes(),
                                 ),
@@ -258,10 +259,7 @@ impl SceneBuilder {
                         self.meshes[instance.mesh_id.0].first_triangle as u32,
                         0xFF,
                     ),
-                    instance_shader_binding_table_record_offset_and_flags: Packed24_8::new(
-                        0,
-                        GeometryInstanceFlags::TRIANGLE_FACING_CULL_DISABLE.into(),
-                    ),
+                    instance_shader_binding_table_record_offset_and_flags: Packed24_8::new(0, 0),
                     acceleration_structure_reference: mesh_accel_structs[instance.mesh_id.0]
                         .device_address()
                         .into(),
