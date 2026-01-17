@@ -8,7 +8,6 @@ use gltf::scene::Transform;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use vulkano::Packed24_8;
 use vulkano::acceleration_structure::{
     AccelerationStructure, AccelerationStructureGeometries,
     AccelerationStructureGeometryInstancesData, AccelerationStructureGeometryInstancesDataType,
@@ -16,6 +15,7 @@ use vulkano::acceleration_structure::{
 };
 use vulkano::buffer::{BufferContents, BufferUsage, IndexBuffer, Subbuffer};
 use vulkano::format::Format;
+use vulkano::{DeviceAddress, Packed24_8};
 
 #[derive(BufferContents, Copy, Clone)]
 #[repr(C)]
@@ -30,31 +30,33 @@ pub struct CameraData {
     pub fov: f32,
 }
 
+pub struct BuiltMesh {
+    pub vertex_buffer: Subbuffer<[Vertex]>,
+    pub index_buffer: Subbuffer<[u32]>,
+}
+
 #[derive(BufferContents, Copy, Clone)]
 #[repr(C)]
-pub struct InstanceInfo {
-    pub first_vertex: u32,
-    pub first_index: u32,
+pub struct BuiltInstance {
+    pub vertices: DeviceAddress,
+    pub indices: DeviceAddress,
 }
 
 pub struct Scene {
     pub mesh_accel_structs: Vec<Arc<AccelerationStructure>>,
     pub accel_struct: Arc<AccelerationStructure>,
 
-    pub instance_info_buffer: Subbuffer<[InstanceInfo]>,
-    pub vertex_buffer: Subbuffer<[Vertex]>,
-    pub index_buffer: Subbuffer<[u32]>,
+    pub meshes: Vec<BuiltMesh>,
+    pub instance_buffer: Subbuffer<[BuiltInstance]>,
 }
 
 #[derive(Copy, Clone)]
 pub struct MeshId(usize);
 
 struct Mesh {
-    first_vertex: u64,
-    vertex_count: u64,
-
-    first_index: u64,
-    index_count: u64,
+    positions: Vec<Vec3>,
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
 }
 
 struct Instance {
@@ -65,10 +67,6 @@ struct Instance {
 pub struct SceneBuilder {
     meshes: Vec<Mesh>,
     instances: Vec<Instance>,
-
-    positions: Vec<Vec3>,
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
 }
 
 impl SceneBuilder {
@@ -76,33 +74,22 @@ impl SceneBuilder {
         SceneBuilder {
             meshes: Vec::with_capacity(8),
             instances: Vec::with_capacity(8),
-
-            positions: Vec::with_capacity(1024),
-            vertices: Vec::with_capacity(1024),
-            indices: Vec::with_capacity(1024),
         }
     }
 
     pub fn create_mesh<'a>(
         &mut self,
-        positions: &[Vec3],
-        vertices: &[Vertex],
-        indices: impl IntoIterator<Item = &'a u32, IntoIter: ExactSizeIterator>,
+        positions: Vec<Vec3>,
+        vertices: Vec<Vertex>,
+        indices: Vec<u32>,
     ) -> MeshId {
         assert_eq!(positions.len(), vertices.len());
-        let indices_it = indices.into_iter();
 
         self.meshes.push(Mesh {
-            first_vertex: self.vertices.len() as u64,
-            vertex_count: vertices.len() as u64,
-
-            first_index: self.indices.len() as u64,
-            index_count: indices_it.len() as u64,
+            positions,
+            vertices,
+            indices,
         });
-
-        self.positions.extend_from_slice(positions);
-        self.vertices.extend_from_slice(vertices);
-        self.indices.extend(indices_it);
 
         MeshId(self.meshes.len() - 1)
     }
@@ -175,14 +162,14 @@ impl SceneBuilder {
                         };
 
                         builder.create_mesh(
-                            &positions,
-                            &normals
+                            positions,
+                            normals
                                 .iter()
                                 .map(move |normal| Vertex {
                                     normal: normal.extend(0.0),
                                 })
-                                .collect::<Vec<Vertex>>(),
-                            &indices,
+                                .collect(),
+                            indices,
                         )
                     });
 
@@ -215,80 +202,74 @@ impl SceneBuilder {
     }
 
     pub fn build(&self, gpu: &Gpu) -> Scene {
-        let position_buffer = gpu.create_filled_buffer(
-            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
-                | BufferUsage::SHADER_DEVICE_ADDRESS
-                | BufferUsage::STORAGE_BUFFER,
-            &self.positions,
-        );
-
-        let vertex_buffer = gpu.create_filled_buffer(BufferUsage::STORAGE_BUFFER, &self.vertices);
-
-        let index_buffer = gpu.create_filled_buffer(
-            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
-                | BufferUsage::SHADER_DEVICE_ADDRESS
-                | BufferUsage::STORAGE_BUFFER,
-            &self.indices,
-        );
-
         // Create mesh (bottom level) acceleration structures
 
         let mut mesh_accel_structs = Vec::with_capacity(self.meshes.len());
+        let mut meshes = Vec::with_capacity(self.meshes.len());
 
         for i in 0..self.meshes.len() {
             let mesh = &self.meshes[i];
 
+            let position_buffer = gpu.create_filled_buffer(
+                BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
+                    | BufferUsage::SHADER_DEVICE_ADDRESS,
+                &mesh.positions,
+            );
+
+            let vertex_buffer = gpu.create_filled_buffer(
+                BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
+                    | BufferUsage::SHADER_DEVICE_ADDRESS,
+                &mesh.vertices,
+            );
+
+            let index_buffer = gpu.create_filled_buffer(
+                BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
+                    | BufferUsage::SHADER_DEVICE_ADDRESS,
+                &mesh.indices,
+            );
+
+            meshes.push(BuiltMesh {
+                vertex_buffer,
+                index_buffer: index_buffer.clone(),
+            });
+
             gpu.execute(|commands| {
-                mesh_accel_structs.push(
-                    gpu.create_accel_struct(
-                        true,
-                        AccelerationStructureGeometries::Triangles(vec![
-                            AccelerationStructureGeometryTrianglesData {
-                                flags: GeometryFlags::OPAQUE,
-                                vertex_data: Some(
-                                    position_buffer
-                                        .clone()
-                                        .slice(
-                                            mesh.first_vertex
-                                                ..mesh.first_vertex + mesh.vertex_count,
-                                        )
-                                        .into_bytes(),
-                                ),
-                                vertex_stride: size_of::<Vec3>() as u32,
-                                max_vertex: (mesh.vertex_count - 1) as u32,
-                                index_data: Some(IndexBuffer::U32(
-                                    index_buffer.clone().slice(
-                                        mesh.first_index..mesh.first_index + mesh.index_count,
-                                    ),
-                                )),
-                                transform_data: None,
-                                ..AccelerationStructureGeometryTrianglesData::new(
-                                    Format::R32G32B32_SFLOAT,
-                                )
-                            },
-                        ]),
-                        commands,
-                    ),
-                );
+                mesh_accel_structs.push(gpu.create_accel_struct(
+                    true,
+                    AccelerationStructureGeometries::Triangles(vec![
+                        AccelerationStructureGeometryTrianglesData {
+                            flags: GeometryFlags::OPAQUE,
+                            vertex_data: Some(position_buffer.into_bytes()),
+                            vertex_stride: size_of::<Vec3>() as u32,
+                            max_vertex: (mesh.vertices.len() - 1) as u32,
+                            index_data: Some(IndexBuffer::U32(index_buffer)),
+                            transform_data: None,
+                            ..AccelerationStructureGeometryTrianglesData::new(
+                                Format::R32G32B32_SFLOAT,
+                            )
+                        },
+                    ]),
+                    commands,
+                ));
             });
         }
 
         // Create instance info buffer
 
-        let instance_info_buffer = gpu.create_filled_buffer(
+        let built_instance_buffer = gpu.create_filled_buffer(
             BufferUsage::STORAGE_BUFFER,
             &self
                 .instances
                 .iter()
-                .map(move |instance| {
-                    let mesh = &self.meshes[instance.mesh_id.0];
+                .map(|instance| {
+                    let mesh = &meshes[instance.mesh_id.0];
 
-                    InstanceInfo {
-                        first_vertex: mesh.first_vertex as u32,
-                        first_index: mesh.first_index as u32,
+                    BuiltInstance {
+                        vertices: mesh.vertex_buffer.device_address().unwrap().into(),
+                        indices: mesh.index_buffer.device_address().unwrap().into(),
                     }
                 })
-                .collect::<Vec<InstanceInfo>>(),
+                .collect::<Vec<BuiltInstance>>(),
         );
 
         // Create top level acceleration structure
@@ -335,9 +316,8 @@ impl SceneBuilder {
             mesh_accel_structs,
             accel_struct,
 
-            instance_info_buffer,
-            vertex_buffer,
-            index_buffer,
+            meshes,
+            instance_buffer: built_instance_buffer,
         }
     }
 }
