@@ -1,5 +1,5 @@
 use crate::gpu::Gpu;
-use glam::{Mat4, Quat, Vec3, vec4};
+use glam::{Mat4, Quat, Vec3, Vec4, vec4};
 use gltf::Node;
 use gltf::camera::Projection;
 use gltf::mesh::Mode;
@@ -8,27 +8,20 @@ use gltf::scene::Transform;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use vulkano::Packed24_8;
 use vulkano::acceleration_structure::{
     AccelerationStructure, AccelerationStructureGeometries,
     AccelerationStructureGeometryInstancesData, AccelerationStructureGeometryInstancesDataType,
     AccelerationStructureGeometryTrianglesData, AccelerationStructureInstance, GeometryFlags,
 };
-use vulkano::buffer::{BufferContents, BufferUsage, Subbuffer};
+use vulkano::buffer::{BufferContents, BufferUsage, IndexBuffer, Subbuffer};
 use vulkano::format::Format;
-use vulkano::{DeviceSize, Packed24_8};
 
 #[derive(BufferContents, Copy, Clone)]
 #[repr(C)]
 pub struct Vertex {
-    pub position: Vec3,
-    pub u: f32,
-    pub normal: Vec3,
-    pub v: f32,
+    pub normal: Vec4,
 }
-
-#[derive(BufferContents, Copy, Clone)]
-#[repr(transparent)]
-pub struct Triangle(pub [Vertex; 3]);
 
 #[derive(Copy, Clone, Default)]
 pub struct CameraData {
@@ -40,15 +33,19 @@ pub struct CameraData {
 pub struct Scene {
     pub mesh_accel_structs: Vec<Arc<AccelerationStructure>>,
     pub accel_struct: Arc<AccelerationStructure>,
-    pub triangle_buffer: Subbuffer<[Triangle]>,
+    pub vertex_buffer: Subbuffer<[Vertex]>,
+    pub index_buffer: Subbuffer<[u32]>,
 }
 
 #[derive(Copy, Clone)]
 pub struct MeshId(usize);
 
 struct Mesh {
-    first_triangle: u64,
-    triangle_count: u32,
+    first_vertex: u64,
+    vertex_count: u64,
+
+    first_index: u64,
+    index_count: u64,
 }
 
 struct Instance {
@@ -59,7 +56,10 @@ struct Instance {
 pub struct SceneBuilder {
     meshes: Vec<Mesh>,
     instances: Vec<Instance>,
-    triangles: Vec<Triangle>,
+
+    positions: Vec<Vec3>,
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
 }
 
 impl SceneBuilder {
@@ -67,17 +67,34 @@ impl SceneBuilder {
         SceneBuilder {
             meshes: Vec::with_capacity(8),
             instances: Vec::with_capacity(8),
-            triangles: Vec::with_capacity(1024),
+
+            positions: Vec::with_capacity(1024),
+            vertices: Vec::with_capacity(1024),
+            indices: Vec::with_capacity(1024),
         }
     }
 
-    pub fn create_mesh(&mut self, triangles: &[Triangle]) -> MeshId {
+    pub fn create_mesh(
+        &mut self,
+        positions: &[Vec3],
+        vertices: &[Vertex],
+        indices: &[u32],
+    ) -> MeshId {
+        assert_eq!(positions.len(), vertices.len());
+
         self.meshes.push(Mesh {
-            first_triangle: self.triangles.len() as u64,
-            triangle_count: triangles.len() as u32,
+            first_vertex: self.vertices.len() as u64,
+            vertex_count: vertices.len() as u64,
+
+            first_index: self.indices.len() as u64,
+            index_count: indices.len() as u64,
         });
 
-        self.triangles.extend_from_slice(triangles);
+        let offset = self.vertices.len() as u32;
+
+        self.positions.extend_from_slice(positions);
+        self.vertices.extend_from_slice(vertices);
+        self.indices.extend(indices.iter().map(move |i| offset + i));
 
         MeshId(self.meshes.len() - 1)
     }
@@ -135,17 +152,13 @@ impl SceneBuilder {
                     let mesh_id = meshes.entry(mesh.index()).or_insert_with(|| {
                         let reader = primitive.reader(move |buffer| Some(&buffers[buffer.index()]));
 
-                        let positions: Vec<Vec3> = reader
-                            .read_positions()
-                            .unwrap()
-                            .map(|pos| (Vec3::from_array(pos)))
-                            .collect();
+                        let positions: Vec<Vec3> = bytemuck::cast_vec(
+                            reader.read_positions().unwrap().collect::<Vec<[f32; 3]>>(),
+                        );
 
-                        let normals: Vec<Vec3> = reader
-                            .read_normals()
-                            .unwrap()
-                            .map(|normal| (Vec3::from_array(normal)))
-                            .collect();
+                        let normals: Vec<Vec3> = bytemuck::cast_vec(
+                            reader.read_normals().unwrap().collect::<Vec<[f32; 3]>>(),
+                        );
 
                         let indices: Vec<u32> = match reader.read_indices().unwrap() {
                             ReadIndices::U8(iter) => iter.map(move |i| i as u32).collect(),
@@ -153,19 +166,16 @@ impl SceneBuilder {
                             ReadIndices::U32(iter) => iter.collect(),
                         };
 
-                        let triangles: Vec<Triangle> = indices
-                            .iter()
-                            .map(|i| Vertex {
-                                position: positions[*i as usize],
-                                u: 0.0,
-                                normal: normals[*i as usize],
-                                v: 0.0,
-                            })
-                            .array_chunks::<3>()
-                            .map(|vertices| Triangle(vertices))
-                            .collect();
-
-                        builder.create_mesh(&triangles)
+                        builder.create_mesh(
+                            &positions,
+                            &normals
+                                .iter()
+                                .map(move |normal| Vertex {
+                                    normal: normal.extend(0.0),
+                                })
+                                .collect::<Vec<Vertex>>(),
+                            &indices,
+                        )
                     });
 
                     builder.add_instance(*mesh_id, transform);
@@ -188,7 +198,7 @@ impl SceneBuilder {
                 &mut meshes,
                 &buffers,
                 &mut camera_data,
-                Mat4::IDENTITY,
+                transform,
                 node,
             );
         }
@@ -197,11 +207,20 @@ impl SceneBuilder {
     }
 
     pub fn build(&self, gpu: &Gpu) -> Scene {
-        let triangle_buffer = gpu.create_filled_buffer(
+        let position_buffer = gpu.create_filled_buffer(
             BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
                 | BufferUsage::SHADER_DEVICE_ADDRESS
                 | BufferUsage::STORAGE_BUFFER,
-            &self.triangles,
+            &self.positions,
+        );
+
+        let vertex_buffer = gpu.create_filled_buffer(BufferUsage::STORAGE_BUFFER, &self.vertices);
+
+        let index_buffer = gpu.create_filled_buffer(
+            BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
+                | BufferUsage::SHADER_DEVICE_ADDRESS
+                | BufferUsage::STORAGE_BUFFER,
+            &self.indices,
         );
 
         // Create mesh (bottom level) acceleration structures
@@ -215,27 +234,25 @@ impl SceneBuilder {
                 mesh_accel_structs.push(gpu.create_accel_struct(
                     true,
                     AccelerationStructureGeometries::Triangles(vec![
-                            AccelerationStructureGeometryTrianglesData {
-                                flags: GeometryFlags::OPAQUE,
-                                vertex_data: Some(
-                                    triangle_buffer
-                                        .clone()
-                                        .slice(
-                                            mesh.first_triangle as DeviceSize
-                                                ..mesh.first_triangle
-                                                    + mesh.triangle_count as DeviceSize,
-                                        )
-                                        .into_bytes(),
+                        AccelerationStructureGeometryTrianglesData {
+                            flags: GeometryFlags::OPAQUE,
+                            vertex_data: Some(position_buffer.clone().into_bytes()),
+                            vertex_stride: size_of::<Vec3>() as u32,
+                            max_vertex: (mesh.first_vertex + mesh.vertex_count - 1) as u32,
+                            index_data: Some(
+                                IndexBuffer::U32(
+                                    index_buffer.clone().slice(
+                                        mesh.first_index..mesh.first_index + mesh.index_count,
+                                    ),
                                 ),
-                                vertex_stride: size_of::<Vertex>() as u32,
-                                max_vertex: mesh.triangle_count * 3 - 1,
-                                index_data: None,
-                                transform_data: None,
-                                ..AccelerationStructureGeometryTrianglesData::new(
-                                    Format::R32G32B32_SFLOAT,
-                                )
-                            },
-                        ]),
+                            ),
+                            transform_data: None,
+                            ..AccelerationStructureGeometryTrianglesData::new(
+                                Format::R32G32B32_SFLOAT,
+                            )
+                        },
+                    ]),
+                    0,
                     commands,
                 ));
             });
@@ -256,7 +273,7 @@ impl SceneBuilder {
                         instance.transform.row(2).to_array(),
                     ],
                     instance_custom_index_and_mask: Packed24_8::new(
-                        self.meshes[instance.mesh_id.0].first_triangle as u32,
+                        self.meshes[instance.mesh_id.0].first_index as u32,
                         0xFF,
                     ),
                     instance_shader_binding_table_record_offset_and_flags: Packed24_8::new(0, 0),
@@ -277,6 +294,7 @@ impl SceneBuilder {
                         )),
                     ),
                 ),
+                0,
                 commands,
             )
         });
@@ -286,7 +304,8 @@ impl SceneBuilder {
         Scene {
             mesh_accel_structs,
             accel_struct,
-            triangle_buffer,
+            vertex_buffer,
+            index_buffer,
         }
     }
 }

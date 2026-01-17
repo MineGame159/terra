@@ -11,7 +11,9 @@ use vulkano::acceleration_structure::{
     AccelerationStructureGeometryInstancesDataType, AccelerationStructureType,
     BuildAccelerationStructureFlags,
 };
-use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
+use vulkano::buffer::{
+    Buffer, BufferContents, BufferCreateInfo, BufferUsage, IndexBuffer, Subbuffer,
+};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
@@ -180,6 +182,7 @@ impl Gpu {
         &self,
         bottom_level: bool,
         geometries: AccelerationStructureGeometries,
+        first_vertex: u32,
         commands: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     ) -> Arc<AccelerationStructure> {
         // Get primitive count
@@ -187,7 +190,14 @@ impl Gpu {
         let primitive_count = match &geometries {
             AccelerationStructureGeometries::Triangles(geometries) => geometries
                 .iter()
-                .map(move |triangles| (triangles.max_vertex + 1) / 3)
+                .map(move |triangles| match &triangles.index_data {
+                    Some(index_buffer) => match index_buffer {
+                        IndexBuffer::U8(buffer) => buffer.len() as u32 / 3,
+                        IndexBuffer::U16(buffer) => buffer.len() as u32 / 3,
+                        IndexBuffer::U32(buffer) => buffer.len() as u32 / 3,
+                    },
+                    None => (triangles.max_vertex + 1) / 3,
+                })
                 .sum(),
             AccelerationStructureGeometries::Aabbs(geometries) => geometries
                 .iter()
@@ -269,7 +279,9 @@ impl Gpu {
                     build_info,
                     smallvec![AccelerationStructureBuildRangeInfo {
                         primitive_count,
-                        ..Default::default()
+                        primitive_offset: 0,
+                        first_vertex,
+                        transform_offset: 0,
                     }],
                 )
                 .unwrap();
@@ -321,7 +333,7 @@ impl Gpu {
         let result = build(&mut commands);
 
         let command_buffer = commands.build().unwrap();
-        
+
         let start = Instant::now();
 
         sync::now(self.device.clone())
@@ -333,7 +345,7 @@ impl Gpu {
             .unwrap();
 
         let duration = Instant::now() - start;
-        
+
         (result, duration)
     }
 }

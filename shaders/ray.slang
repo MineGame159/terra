@@ -22,29 +22,20 @@ struct PushConstants {
 ConstantBuffer<PushConstants> pc;
 
 struct Vertex {
-    float3 position;
-    float u;
     float3 normal;
-    float v;
-
-    property float2 uv {
-        get {
-            return float2(u, v);
-        }
-    }
-}
-
-struct Triangle {
-    Vertex vertices[3];
+    float _pad;
 }
 
 [vk_binding(0, 0)]
 RaytracingAccelerationStructure accelStruct;
 
 [vk_binding(1, 0)]
-StructuredBuffer<Triangle> triangles;
+StructuredBuffer<Vertex> vertices;
 
-[vk_binding(2, 0), format("rgba32f")]
+[vk_binding(2, 0)]
+StructuredBuffer<uint> indices;
+
+[vk_binding(3, 0), format("rgba32f")]
 RWTexture2D image;
 
 struct RayPayload {
@@ -99,14 +90,16 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     let b = attributes.barycentrics;
     let bary = float3(1.0 - b.x - b.y, b.x, b.y);
 
-    let triangle = triangles[CustomInstanceIndex() + PrimitiveIndex()];
+    let index_i = CustomInstanceIndex() + PrimitiveIndex() * 3;
+    let index_a = indices[index_i + 0];
+    let index_b = indices[index_i + 1];
+    let index_c = indices[index_i + 2];
 
-    let position = triangle.vertices[0].position * bary.x + triangle.vertices[1].position * bary.y + triangle.vertices[2].position * bary.z;
-    let normal = triangle.vertices[0].normal * bary.x + triangle.vertices[1].normal * bary.y + triangle.vertices[2].normal * bary.z;
+    let normal = vertices[index_a].normal * bary.x + vertices[index_b].normal * bary.y + vertices[index_c].normal * bary.z;
 
     payload.hit = true;
-    payload.position = mul(float4(position, 1), ObjectToWorld4x3());
-    payload.normal = normalize(mul(float4(normal, 0), ObjectToWorld4x3()));
+    payload.position = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
+    payload.normal = normalize(mul((float3x3) WorldToObject4x3(), normal));
 }
 
 [shader("miss")]

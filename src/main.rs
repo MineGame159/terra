@@ -5,7 +5,7 @@ mod scene;
 
 use crate::gpu::{DescriptorInfo, Gpu};
 use crate::scene::{CameraData, SceneBuilder};
-use glam::{FloatExt, Mat4, U8Vec3, Vec3, Vec4, uvec2, vec3, UVec2};
+use glam::{FloatExt, Mat4, U8Vec3, UVec2, Vec3, Vec4, uvec2, vec3};
 use kdam::tqdm;
 use png::{BitDepth, ColorType};
 use smallvec::smallvec;
@@ -13,11 +13,11 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use vulkano::DeviceSize;
 use vulkano::buffer::{BufferContents, BufferUsage, Subbuffer};
 use vulkano::command_buffer::CopyImageToBufferInfo;
 use vulkano::descriptor_set::layout::{DescriptorSetLayout, DescriptorType};
 use vulkano::descriptor_set::{DescriptorImageViewInfo, DescriptorSet, WriteDescriptorSet};
-use vulkano::DeviceSize;
 use vulkano::format::Format;
 use vulkano::image::{ImageLayout, ImageUsage};
 use vulkano::memory::allocator::MemoryTypeFilter;
@@ -93,6 +93,10 @@ fn main() {
             type_: DescriptorType::StorageBuffer,
         },
         DescriptorInfo {
+            stages: ShaderStages::CLOSEST_HIT,
+            type_: DescriptorType::StorageBuffer,
+        },
+        DescriptorInfo {
             stages: ShaderStages::RAYGEN,
             type_: DescriptorType::StorageImage,
         },
@@ -124,9 +128,10 @@ fn main() {
         set_layout.clone(),
         [
             WriteDescriptorSet::acceleration_structure(0, scene.accel_struct.clone()),
-            WriteDescriptorSet::buffer(1, scene.triangle_buffer.clone()),
+            WriteDescriptorSet::buffer(1, scene.vertex_buffer.clone()),
+            WriteDescriptorSet::buffer(2, scene.index_buffer.clone()),
             WriteDescriptorSet::image_view_with_layout(
-                2,
+                3,
                 DescriptorImageViewInfo {
                     image_view: image_view.clone(),
                     image_layout: ImageLayout::General,
@@ -180,7 +185,10 @@ fn main() {
 
             unsafe {
                 commands
-                    .trace_rays(shader_binding_table.addresses().clone(), [SIZE.x, SIZE.y, 1])
+                    .trace_rays(
+                        shader_binding_table.addresses().clone(),
+                        [SIZE.x, SIZE.y, 1],
+                    )
                     .unwrap();
             }
         });
