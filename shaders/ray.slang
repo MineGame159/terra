@@ -59,7 +59,7 @@ void RayGen() {
     RayDesc ray;
     ray.Origin = pc.camera.origin;
     ray.Direction = pc.camera.GetDirection(uv);
-    ray.TMin = 1E-4f;
+    ray.TMin = 0.0;
     ray.TMax = float.maxValue;
 
     // Trace ray
@@ -75,10 +75,25 @@ void RayGen() {
             break;
         }
 
-        ray.Origin = payload.position;
+        // Material
+        let albedo = float3(0.5);
+        let roughness = 0.5;
+
+        // View direction
+        let V = -normalize(ray.Direction);
+
+        // Modify ray
+        ray.Origin = payload.position + payload.normal * 1e-4;
         ray.Direction = RandomCosineHemisphere(rng, payload.normal);
 
-        color *= 0.5;
+        // Light direction
+        let L = ray.Direction;
+
+        // Evaluate BRDF
+        let brdf = EvalDisneyDiffuse(albedo, roughness, payload.normal, L, V);
+
+        // Modify ray color
+        color *= brdf * float.getPi();
     }
 
     // Accumulate color
