@@ -194,7 +194,6 @@ impl Gpu {
         &self,
         bottom_level: bool,
         geometries: AccelerationStructureGeometries,
-        first_vertex: u32,
         commands: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     ) -> Arc<AccelerationStructure> {
         // Get primitive count
@@ -292,7 +291,7 @@ impl Gpu {
                     smallvec![AccelerationStructureBuildRangeInfo {
                         primitive_count,
                         primitive_offset: 0,
-                        first_vertex,
+                        first_vertex: 0,
                         transform_offset: 0,
                     }],
                 )

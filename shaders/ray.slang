@@ -21,6 +21,11 @@ struct PushConstants {
 [vk_push_constant]
 ConstantBuffer<PushConstants> pc;
 
+struct Instance {
+    uint first_vertex;
+    uint first_index;
+}
+
 struct Vertex {
     float3 normal;
     float _pad;
@@ -30,12 +35,15 @@ struct Vertex {
 RaytracingAccelerationStructure accelStruct;
 
 [vk_binding(1, 0)]
-StructuredBuffer<Vertex> vertices;
+StructuredBuffer<Instance> instances;
 
 [vk_binding(2, 0)]
+StructuredBuffer<Vertex> vertices;
+
+[vk_binding(3, 0)]
 StructuredBuffer<uint> indices;
 
-[vk_binding(3, 0), format("rgba32f")]
+[vk_binding(4, 0), format("rgba32f")]
 RWTexture2D image;
 
 struct RayPayload {
@@ -90,10 +98,12 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     let b = attributes.barycentrics;
     let bary = float3(1.0 - b.x - b.y, b.x, b.y);
 
-    let index_i = CustomInstanceIndex() + PrimitiveIndex() * 3;
-    let index_a = indices[index_i + 0];
-    let index_b = indices[index_i + 1];
-    let index_c = indices[index_i + 2];
+    let instance = instances[CustomInstanceIndex()];
+
+    let index_i = instance.first_index + PrimitiveIndex() * 3;
+    let index_a = instance.first_vertex + indices[index_i + 0];
+    let index_b = instance.first_vertex + indices[index_i + 1];
+    let index_c = instance.first_vertex + indices[index_i + 2];
 
     let normal = vertices[index_a].normal * bary.x + vertices[index_b].normal * bary.y + vertices[index_c].normal * bary.z;
 

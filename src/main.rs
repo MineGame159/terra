@@ -97,6 +97,10 @@ fn main() {
             type_: DescriptorType::StorageBuffer,
         },
         DescriptorInfo {
+            stages: ShaderStages::CLOSEST_HIT,
+            type_: DescriptorType::StorageBuffer,
+        },
+        DescriptorInfo {
             stages: ShaderStages::RAYGEN,
             type_: DescriptorType::StorageImage,
         },
@@ -128,10 +132,11 @@ fn main() {
         set_layout.clone(),
         [
             WriteDescriptorSet::acceleration_structure(0, scene.accel_struct.clone()),
-            WriteDescriptorSet::buffer(1, scene.vertex_buffer.clone()),
-            WriteDescriptorSet::buffer(2, scene.index_buffer.clone()),
+            WriteDescriptorSet::buffer(1, scene.instance_info_buffer.clone()),
+            WriteDescriptorSet::buffer(2, scene.vertex_buffer.clone()),
+            WriteDescriptorSet::buffer(3, scene.index_buffer.clone()),
             WriteDescriptorSet::image_view_with_layout(
-                3,
+                4,
                 DescriptorImageViewInfo {
                     image_view: image_view.clone(),
                     image_layout: ImageLayout::General,
