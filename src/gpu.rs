@@ -16,7 +16,7 @@ use vulkano::buffer::{
 };
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
+    AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryAutoCommandBuffer,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::layout::{
@@ -142,13 +142,25 @@ impl Gpu {
         usage: BufferUsage,
         data: &[T],
     ) -> Subbuffer<[T]> {
-        let buffer = self.create_buffer(
-            usage,
-            MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+        let staging_buffer = self.create_buffer(
+            usage | BufferUsage::TRANSFER_SRC,
+            MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
             data.len() as DeviceSize,
         );
 
-        buffer.write().unwrap().copy_from_slice(data);
+        let buffer = self.create_buffer(
+            usage | BufferUsage::TRANSFER_DST,
+            MemoryTypeFilter::PREFER_DEVICE,
+            data.len() as DeviceSize,
+        );
+
+        staging_buffer.write().unwrap().copy_from_slice(data);
+
+        self.execute(|commands| {
+            commands
+                .copy_buffer(CopyBufferInfo::buffers(staging_buffer, buffer.clone()))
+                .unwrap();
+        });
 
         buffer
     }

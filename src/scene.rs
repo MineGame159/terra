@@ -74,27 +74,28 @@ impl SceneBuilder {
         }
     }
 
-    pub fn create_mesh(
+    pub fn create_mesh<'a>(
         &mut self,
         positions: &[Vec3],
         vertices: &[Vertex],
-        indices: &[u32],
+        indices: impl IntoIterator<Item = &'a u32, IntoIter: ExactSizeIterator>,
     ) -> MeshId {
         assert_eq!(positions.len(), vertices.len());
+        let indices_it = indices.into_iter();
 
         self.meshes.push(Mesh {
             first_vertex: self.vertices.len() as u64,
             vertex_count: vertices.len() as u64,
 
             first_index: self.indices.len() as u64,
-            index_count: indices.len() as u64,
+            index_count: indices_it.len() as u64,
         });
 
         let offset = self.vertices.len() as u32;
 
         self.positions.extend_from_slice(positions);
         self.vertices.extend_from_slice(vertices);
-        self.indices.extend(indices.iter().map(move |i| offset + i));
+        self.indices.extend(indices_it.map(move |i| offset + i));
 
         MeshId(self.meshes.len() - 1)
     }
