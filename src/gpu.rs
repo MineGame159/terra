@@ -275,14 +275,20 @@ impl Gpu {
 
         // Build acceleration structure
 
+        let props = self.physical_device.properties();
+
+        let scratch_alignment = props
+            .min_acceleration_structure_scratch_offset_alignment
+            .unwrap_or(0) as u64;
+
         let scratch_buffer = self.create_buffer(
             BufferUsage::STORAGE_BUFFER | BufferUsage::SHADER_DEVICE_ADDRESS,
             MemoryTypeFilter::PREFER_DEVICE,
-            sizes.build_scratch_size,
+            sizes.build_scratch_size + scratch_alignment,
         );
 
         build_info.dst_acceleration_structure = Some(accel_struct.clone());
-        build_info.scratch_data = Some(scratch_buffer);
+        build_info.scratch_data = Some(align_up(scratch_buffer, scratch_alignment));
 
         unsafe {
             commands
@@ -359,6 +365,19 @@ impl Gpu {
 
         (result, duration)
     }
+}
+
+fn align_up(buffer: Subbuffer<[u8]>, alignment: DeviceSize) -> Subbuffer<[u8]> {
+    let address: DeviceSize = buffer.device_address().unwrap().into();
+    let remainder = address % alignment;
+
+    let padding = if remainder == 0 {
+        0
+    } else {
+        alignment - remainder
+    };
+
+    buffer.slice(padding..)
 }
 
 fn select_physical_device(instance: &Arc<Instance>) -> Option<Arc<PhysicalDevice>> {
