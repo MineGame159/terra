@@ -18,7 +18,7 @@ use smallvec::smallvec;
 use vulkano::{
     DeviceSize,
     buffer::{BufferContents, BufferUsage, Subbuffer},
-    command_buffer::CopyImageToBufferInfo,
+    command_buffer::{ClearColorImageInfo, CopyImageToBufferInfo},
     descriptor_set::{
         DescriptorImageViewInfo, DescriptorSet, WriteDescriptorSet,
         layout::{DescriptorSetLayout, DescriptorType},
@@ -141,7 +141,7 @@ fn main() {
     let (image, image_view) = gpu.create_image(
         SIZE,
         Format::R32G32B32A32_SFLOAT,
-        ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
+        ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST,
     );
 
     let set = DescriptorSet::new(
@@ -199,6 +199,12 @@ fn main() {
 
     for _ in tqdm!(0..SAMPLES) {
         let (_, duration) = gpu.execute(|commands| {
+            if pc.sample == 0 {
+                commands
+                    .clear_color_image(ClearColorImageInfo::image(image.clone()))
+                    .unwrap();
+            }
+
             commands
                 .bind_pipeline_ray_tracing(pipeline.clone())
                 .unwrap();

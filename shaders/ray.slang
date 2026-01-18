@@ -177,7 +177,8 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     let uv = instance.vertices[index_a].uv * bary.x + instance.vertices[index_b].uv * bary.y + instance.vertices[index_c].uv * bary.z;
     let tangent = instance.vertices[index_a].tangent * bary.x + instance.vertices[index_b].tangent * bary.y + instance.vertices[index_c].tangent * bary.z;
 
-    var N = normalize(mul((float3x3) ObjectToWorld(), normal));
+    let geoN = normalize(mul((float3x3) ObjectToWorld(), normal));
+    var N = geoN;
 
     payload.hit = true;
 
@@ -222,6 +223,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     // View direction
     let V = -WorldRayDirection();
     let ffN = dot(N, V) < 0.0 ? -N : N;
+    let ffgeoN = dot(N, V) < 0.0 ? -geoN : geoN;
 
     // F0: Surface reflection at 0 degrees
     // Dielectric: 0.04, Metal: albedo
@@ -237,7 +239,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     // Clamp to ensure we don't always/never sample one path
     selectionProb = clamp(selectionProb, 0.05, 0.95);
 
-    payload.new_origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + ffN * 1e-4;
+    payload.new_origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + ffgeoN * 1e-4;
 
     if (Random(payload.rng) < selectionProb) {
         // --- Specular Path (GGX) ---
