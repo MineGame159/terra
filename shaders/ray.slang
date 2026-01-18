@@ -23,12 +23,56 @@ ConstantBuffer<PushConstants> pc;
 
 struct Vertex {
     float3 normal;
-    float _pad;
+    float _pad0;
+
+    float2 uv;
+    float2 _pad1;
+}
+
+struct Material {
+    float4 albedo_factor;
+    uint albedo_texture;
+
+    float metallic_factor;
+    float roughness_factor;
+    uint metallic_roughness_texture;
+
+    float3 albedo(float2 uv) {
+        var albedo = albedo_factor.rgb;
+
+        if (albedo_texture > 0) {
+            albedo *= textures[albedo_texture - 1].SampleLevelZero(uv).rgb;
+        }
+
+        return albedo;
+    }
+
+    float metallic(float2 uv) {
+        var metallic = metallic_factor;
+
+        if (metallic_roughness_texture > 0) {
+            metallic *= textures[metallic_roughness_texture - 1].SampleLevelZero(uv).b;
+        }
+
+        return metallic;
+    }
+
+    float roughness(float2 uv) {
+        var roughness = roughness_factor;
+
+        if (metallic_roughness_texture > 0) {
+            roughness *= textures[metallic_roughness_texture - 1].SampleLevelZero(uv).g;
+        }
+
+        return roughness;
+    }
 }
 
 struct Instance {
     Vertex* vertices;
     uint* indices;
+
+    Material material;
 }
 
 [vk_binding(0, 0)]
@@ -37,13 +81,19 @@ RaytracingAccelerationStructure accelStruct;
 [vk_binding(1, 0)]
 StructuredBuffer<Instance> instances;
 
-[vk_binding(2, 0), format("rgba32f")]
+[vk_binding(2, 0)]
+ConstantBuffer<Sampler2D<float3>[]> textures;
+
+[vk_binding(3, 0), format("rgba32f")]
 RWTexture2D image;
 
 struct RayPayload {
+    uint rng;
+
     bool hit;
-    float3 position;
-    float3 normal;
+    float3 new_origin;
+    float3 new_direction;
+    float3 color;
 }
 
 [shader("raygen")]
@@ -68,32 +118,19 @@ void RayGen() {
 
     for (uint i = 0; i < pc.bounces; i++) {
         RayPayload payload;
+        payload.rng = rng * (i + 1);
+
         TraceRay(accelStruct, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
 
         if (!payload.hit) {
-            light += color * GetBackground(ray.Direction);
+            light += color * payload.color;
             break;
         }
 
-        // Material
-        let albedo = float3(0.5);
-        let roughness = 0.5;
+        ray.Origin = payload.new_origin;
+        ray.Direction = payload.new_direction;
 
-        // View direction
-        let V = -normalize(ray.Direction);
-
-        // Modify ray
-        ray.Origin = payload.position + payload.normal * 1e-4;
-        ray.Direction = RandomCosineHemisphere(rng, payload.normal);
-
-        // Light direction
-        let L = ray.Direction;
-
-        // Evaluate BRDF
-        let brdf = EvalDisneyDiffuse(albedo, roughness, payload.normal, L, V);
-
-        // Modify ray color
-        color *= brdf * float.getPi();
+        color *= payload.color;
     }
 
     // Accumulate color
@@ -114,14 +151,36 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     let index_b = instance.indices[index_i + 1];
     let index_c = instance.indices[index_i + 2];
 
-    let normal = instance.vertices[index_a].normal * bary.x + instance.vertices[index_b].normal * bary.y + instance.vertices[index_c].normal * bary.z;
+    var normal = instance.vertices[index_a].normal * bary.x + instance.vertices[index_b].normal * bary.y + instance.vertices[index_c].normal * bary.z;
+    let uv = instance.vertices[index_a].uv * bary.x + instance.vertices[index_b].uv * bary.y + instance.vertices[index_c].uv * bary.z;
+
+    normal = normalize(mul((float3x3) ObjectToWorld(), normal));
 
     payload.hit = true;
-    payload.position = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
-    payload.normal = normalize(mul((float3x3) ObjectToWorld(), normal));
+
+    // Material
+    let albedo = instance.material.albedo(uv);
+    let roughness = instance.material.roughness(uv);
+
+    // View direction
+    let V = -WorldRayDirection();
+
+    // Modify ray
+    payload.new_origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + normal * 1e-4;
+    payload.new_direction = RandomCosineHemisphere(payload.rng, normal);
+
+    // Light direction
+    let L = payload.new_direction;
+
+    // Evaluate BRDF
+    let brdf = EvalDisneyDiffuse(albedo, roughness, normal, L, V);
+
+    // Modify ray color
+    payload.color = brdf * float.getPi();
 }
 
 [shader("miss")]
 void Miss(inout RayPayload payload) {
     payload.hit = false;
+    payload.color = GetBackground(WorldRayDirection());
 }

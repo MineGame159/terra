@@ -1,44 +1,54 @@
+use std::{
+    cmp::Ordering,
+    collections::BTreeMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use glam::UVec2;
 use smallvec::smallvec;
-use std::cmp::Ordering;
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use vulkano::acceleration_structure::{
-    AccelerationStructure, AccelerationStructureBuildGeometryInfo,
-    AccelerationStructureBuildRangeInfo, AccelerationStructureBuildType,
-    AccelerationStructureCreateInfo, AccelerationStructureGeometries,
-    AccelerationStructureGeometryInstancesDataType, AccelerationStructureType,
-    BuildAccelerationStructureFlags,
+use vulkano::{
+    DeviceSize, VulkanLibrary,
+    acceleration_structure::{
+        AccelerationStructure, AccelerationStructureBuildGeometryInfo,
+        AccelerationStructureBuildRangeInfo, AccelerationStructureBuildType,
+        AccelerationStructureCreateInfo, AccelerationStructureGeometries,
+        AccelerationStructureGeometryInstancesDataType, AccelerationStructureType,
+        BuildAccelerationStructureFlags,
+    },
+    buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, IndexBuffer, Subbuffer},
+    command_buffer::{
+        AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo,
+        PrimaryAutoCommandBuffer, allocator::StandardCommandBufferAllocator,
+    },
+    descriptor_set::{
+        allocator::StandardDescriptorSetAllocator,
+        layout::{
+            DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding,
+            DescriptorSetLayoutCreateInfo, DescriptorType,
+        },
+    },
+    device::{
+        Device, DeviceCreateInfo, DeviceExtensions, DeviceFeatures, Queue, QueueCreateInfo,
+        QueueFlags,
+        physical::{PhysicalDevice, PhysicalDeviceType},
+    },
+    format::Format,
+    image::{
+        Image, ImageCreateInfo, ImageLayout, ImageUsage,
+        view::{ImageView, ImageViewCreateInfo},
+    },
+    instance::{Instance, InstanceCreateInfo},
+    memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
+    shader::ShaderStages,
+    sync::{self, GpuFuture},
 };
-use vulkano::buffer::{
-    Buffer, BufferContents, BufferCreateInfo, BufferUsage, IndexBuffer, Subbuffer,
-};
-use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
-use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryAutoCommandBuffer,
-};
-use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
-use vulkano::descriptor_set::layout::{
-    DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
-};
-use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
-use vulkano::device::{
-    Device, DeviceCreateInfo, DeviceExtensions, DeviceFeatures, Queue, QueueCreateInfo, QueueFlags,
-};
-use vulkano::format::Format;
-use vulkano::image::view::{ImageView, ImageViewCreateInfo};
-use vulkano::image::{Image, ImageCreateInfo, ImageLayout, ImageUsage};
-use vulkano::instance::{Instance, InstanceCreateInfo};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
-use vulkano::shader::ShaderStages;
-use vulkano::sync::GpuFuture;
-use vulkano::{DeviceSize, VulkanLibrary, sync};
 
 #[derive(Copy, Clone)]
 pub struct DescriptorInfo {
     pub stages: ShaderStages,
     pub type_: DescriptorType,
+    pub count: u32,
 }
 
 pub struct Gpu {
@@ -56,11 +66,16 @@ pub struct Gpu {
 impl Gpu {
     pub fn new() -> Gpu {
         let vk = VulkanLibrary::new().unwrap();
+
         let instance = Instance::new(
             vk.clone(),
-            InstanceCreateInfo::application_from_cargo_toml(),
+            InstanceCreateInfo {
+                enabled_layers: vec![String::from("VK_LAYER_KHRONOS_validation")],
+                ..InstanceCreateInfo::application_from_cargo_toml()
+            },
         )
         .unwrap();
+
         let physical_device = select_physical_device(&instance).unwrap();
         let queue_family_index = find_queue_family_index(&physical_device).unwrap();
 
@@ -74,9 +89,14 @@ impl Gpu {
                 }],
                 enabled_extensions: DeviceExtensions {
                     khr_ray_tracing_pipeline: true,
+                    khr_acceleration_structure: true,
+                    khr_deferred_host_operations: true,
                     ..Default::default()
                 },
                 enabled_features: DeviceFeatures {
+                    descriptor_binding_partially_bound: true,
+                    runtime_descriptor_array: true,
+                    shader_sampled_image_array_non_uniform_indexing: true,
                     buffer_device_address: true,
                     ray_tracing_pipeline: true,
                     acceleration_structure: true,
@@ -190,6 +210,32 @@ impl Gpu {
         (image, image_view)
     }
 
+    pub fn create_filled_image(
+        &self,
+        size: UVec2,
+        format: Format,
+        usage: ImageUsage,
+        pixels: &[u8],
+    ) -> (Arc<Image>, Arc<ImageView>) {
+        let (image, view) = self.create_image(size, format, usage | ImageUsage::TRANSFER_DST);
+
+        let buffer = self.create_buffer(
+            BufferUsage::TRANSFER_SRC,
+            MemoryTypeFilter::HOST_SEQUENTIAL_WRITE | MemoryTypeFilter::PREFER_HOST,
+            pixels.len() as DeviceSize,
+        );
+
+        buffer.write().unwrap().copy_from_slice(pixels);
+
+        self.execute(|commands| {
+            commands
+                .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(buffer, image.clone()))
+                .unwrap();
+        });
+
+        (image, view)
+    }
+
     pub fn create_accel_struct(
         &self,
         bottom_level: bool,
@@ -251,7 +297,7 @@ impl Gpu {
         // Create backing buffer
 
         let backing_buffer = self.create_buffer(
-            BufferUsage::ACCELERATION_STRUCTURE_STORAGE,
+            BufferUsage::ACCELERATION_STRUCTURE_STORAGE | BufferUsage::SHADER_DEVICE_ADDRESS,
             MemoryTypeFilter::PREFER_DEVICE,
             sizes.acceleration_structure_size,
         );
@@ -319,6 +365,12 @@ impl Gpu {
                 index,
                 DescriptorSetLayoutBinding {
                     stages: descriptor.stages,
+                    binding_flags: if descriptor.count > 1 {
+                        DescriptorBindingFlags::PARTIALLY_BOUND
+                    } else {
+                        DescriptorBindingFlags::empty()
+                    },
+                    descriptor_count: descriptor.count,
                     ..DescriptorSetLayoutBinding::descriptor_type(descriptor.type_)
                 },
             );

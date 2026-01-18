@@ -1,26 +1,29 @@
-use crate::gpu::Gpu;
-use glam::{Mat4, Quat, Vec3, Vec4, vec4};
-use gltf::Node;
-use gltf::camera::Projection;
-use gltf::mesh::Mode;
-use gltf::mesh::util::ReadIndices;
-use gltf::scene::Transform;
-use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
-use vulkano::acceleration_structure::{
-    AccelerationStructure, AccelerationStructureGeometries,
-    AccelerationStructureGeometryInstancesData, AccelerationStructureGeometryInstancesDataType,
-    AccelerationStructureGeometryTrianglesData, AccelerationStructureInstance, GeometryFlags,
+use std::{borrow::Cow, sync::Arc};
+
+use glam::{Mat4, UVec2, Vec2, Vec3, Vec4, vec4};
+use vulkano::{
+    DeviceAddress, Packed24_8,
+    acceleration_structure::{
+        AccelerationStructure, AccelerationStructureGeometries,
+        AccelerationStructureGeometryInstancesData, AccelerationStructureGeometryInstancesDataType,
+        AccelerationStructureGeometryTrianglesData, AccelerationStructureInstance, GeometryFlags,
+    },
+    buffer::{BufferContents, BufferUsage, IndexBuffer, Subbuffer},
+    format::Format,
+    image::{
+        ImageUsage,
+        sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode},
+        view::ImageView,
+    },
 };
-use vulkano::buffer::{BufferContents, BufferUsage, IndexBuffer, Subbuffer};
-use vulkano::format::Format;
-use vulkano::{DeviceAddress, Packed24_8};
+
+use crate::gpu::Gpu;
 
 #[derive(BufferContents, Copy, Clone)]
 #[repr(C)]
 pub struct Vertex {
     pub normal: Vec4,
+    pub uv: Vec4,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -40,6 +43,8 @@ pub struct BuiltMesh {
 pub struct BuiltInstance {
     pub vertices: DeviceAddress,
     pub indices: DeviceAddress,
+
+    pub material: Material,
 }
 
 pub struct Scene {
@@ -48,10 +53,63 @@ pub struct Scene {
 
     pub meshes: Vec<BuiltMesh>,
     pub instance_buffer: Subbuffer<[BuiltInstance]>,
+    pub textures: Vec<(Arc<ImageView>, Arc<Sampler>)>,
 }
 
-#[derive(Copy, Clone)]
-pub struct MeshId(usize);
+macro_rules! index_id {
+    ($name:ident) => {
+        #[derive(BufferContents, PartialEq, Copy, Clone, Debug)]
+        #[repr(transparent)]
+        pub struct $name(u32);
+
+        impl $name {
+            fn new(index: u32) -> Self {
+                Self { 0: index + 1 }
+            }
+
+            pub fn empty() -> Self {
+                Self { 0: 0 }
+            }
+
+            pub fn valid(self) -> bool {
+                self.0 > 0
+            }
+
+            pub fn index(self) -> usize {
+                assert!(self.0 > 0);
+                self.0 as usize - 1
+            }
+        }
+    };
+}
+
+index_id!(MeshId);
+index_id!(ImageId);
+index_id!(TextureId);
+
+#[derive(BufferContents, PartialEq, Copy, Clone)]
+#[repr(C)]
+pub struct Material {
+    pub albedo_factor: Vec4,
+    pub albedo_texture: TextureId,
+
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub metallic_roughness_texture: TextureId,
+}
+
+impl Default for Material {
+    fn default() -> Self {
+        Self {
+            albedo_factor: Vec4::ONE,
+            albedo_texture: TextureId::empty(),
+
+            metallic_factor: 1.0,
+            roughness_factor: 1.0,
+            metallic_roughness_texture: TextureId::empty(),
+        }
+    }
+}
 
 struct Mesh {
     positions: Vec<Vec3>,
@@ -62,22 +120,110 @@ struct Mesh {
 struct Instance {
     mesh_id: MeshId,
     transform: Mat4,
+    material: Material,
 }
 
-pub struct SceneBuilder {
+pub struct SceneBuilder<'a> {
+    gpu: &'a Gpu,
+
     meshes: Vec<Mesh>,
     instances: Vec<Instance>,
+
+    images: Vec<Arc<ImageView>>,
+    textures: Vec<(Arc<ImageView>, Arc<Sampler>)>,
 }
 
-impl SceneBuilder {
-    pub fn new() -> SceneBuilder {
+impl<'a> SceneBuilder<'a> {
+    pub fn new(gpu: &'a Gpu) -> SceneBuilder<'a> {
         SceneBuilder {
+            gpu,
+
             meshes: Vec::with_capacity(8),
             instances: Vec::with_capacity(8),
+
+            images: Vec::with_capacity(8),
+            textures: Vec::with_capacity(8),
         }
     }
 
-    pub fn create_mesh<'a>(
+    pub fn create_image(&mut self, size: UVec2, format: Format, pixels: &[u8]) -> ImageId {
+        assert_eq!(
+            size.as_usizevec2().element_product() * format.block_size() as usize,
+            pixels.len()
+        );
+
+        let (format, pixels) = match format {
+            Format::R8G8B8_UNORM => (
+                Format::R8G8B8A8_UNORM,
+                Cow::Owned(
+                    pixels
+                        .iter()
+                        .array_chunks::<3>()
+                        .flat_map(|[r, g, b]| [*r, *g, *b, 0xFF])
+                        .collect(),
+                ),
+            ),
+            Format::R16G16B16_UNORM => (
+                Format::R8G8B8A8_UNORM,
+                Cow::Owned(bytemuck::cast_vec(
+                    bytemuck::cast_slice::<u8, u16>(pixels)
+                        .iter()
+                        .array_chunks::<3>()
+                        .flat_map(|[r, g, b]| [*r, *g, *b, 0xFFFF])
+                        .collect::<Vec<u16>>(),
+                )),
+            ),
+            Format::R32G32B32_SFLOAT => (
+                Format::R8G8B8A8_UNORM,
+                Cow::Owned(bytemuck::cast_vec(
+                    bytemuck::cast_slice::<u8, f32>(pixels)
+                        .iter()
+                        .array_chunks::<3>()
+                        .flat_map(|[r, g, b]| [*r, *g, *b, 1.0])
+                        .collect::<Vec<f32>>(),
+                )),
+            ),
+            _ => (format, Cow::Borrowed(pixels)),
+        };
+
+        let (_, view) = self
+            .gpu
+            .create_filled_image(size, format, ImageUsage::SAMPLED, &pixels);
+
+        self.images.push(view);
+
+        ImageId::new(self.images.len() as u32 - 1)
+    }
+
+    pub fn create_texture(
+        &mut self,
+        image_id: ImageId,
+        min: Filter,
+        mag: Filter,
+        wrap_s: SamplerAddressMode,
+        wrap_t: SamplerAddressMode,
+    ) -> TextureId {
+        let view = self.images[image_id.index()].clone();
+
+        let sampler = Sampler::new(
+            self.gpu.device.clone(),
+            SamplerCreateInfo {
+                mag_filter: mag,
+                min_filter: min,
+                mipmap_mode: SamplerMipmapMode::Nearest,
+                address_mode: [wrap_s, wrap_t, SamplerAddressMode::Repeat],
+                lod: 0.0..=1.0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        self.textures.push((view, sampler));
+
+        TextureId::new(self.textures.len() as u32 - 1)
+    }
+
+    pub fn create_mesh(
         &mut self,
         positions: Vec<Vec3>,
         vertices: Vec<Vertex>,
@@ -91,117 +237,21 @@ impl SceneBuilder {
             indices,
         });
 
-        MeshId(self.meshes.len() - 1)
+        MeshId::new(self.meshes.len() as u32 - 1)
     }
 
-    pub fn add_instance(&mut self, mesh_id: MeshId, transform: Mat4) {
+    pub fn add_instance(&mut self, mesh_id: MeshId, transform: Mat4, material: Material) {
         assert_eq!(transform.row(3), vec4(0.0, 0.0, 0.0, 1.0));
+        assert!(mesh_id.valid());
 
-        self.instances.push(Instance { mesh_id, transform });
+        self.instances.push(Instance {
+            mesh_id,
+            transform,
+            material,
+        });
     }
 
-    pub fn load_model(&mut self, path: impl AsRef<Path>, transform: Mat4) -> Option<CameraData> {
-        fn load_node(
-            builder: &mut SceneBuilder,
-            meshes: &mut HashMap<usize, MeshId>,
-            buffers: &Vec<gltf::buffer::Data>,
-            camera_data: &mut Option<CameraData>,
-            global_transform: Mat4,
-            node: Node,
-        ) {
-            let local_transform = match node.transform() {
-                Transform::Matrix { matrix } => Mat4::from_cols_array_2d(&matrix),
-                Transform::Decomposed {
-                    translation,
-                    rotation,
-                    scale,
-                } => Mat4::from_scale_rotation_translation(
-                    Vec3::from_array(scale),
-                    Quat::from_array(rotation),
-                    Vec3::from_array(translation),
-                ),
-            };
-
-            let transform = global_transform * local_transform;
-
-            if let Some(camera) = node.camera()
-                && camera_data.is_none()
-            {
-                if let Projection::Perspective(perspective) = camera.projection() {
-                    let position = transform.transform_point3(Vec3::ZERO);
-
-                    *camera_data = Some(CameraData {
-                        position,
-                        look_at: position + transform.transform_vector3(Vec3::NEG_Z),
-                        fov: perspective.yfov().to_degrees(),
-                    });
-                }
-            }
-
-            if let Some(mesh) = node.mesh() {
-                for primitive in mesh.primitives() {
-                    if primitive.mode() != Mode::Triangles {
-                        continue;
-                    }
-
-                    let mesh_id = meshes.entry(mesh.index()).or_insert_with(|| {
-                        let reader = primitive.reader(move |buffer| Some(&buffers[buffer.index()]));
-
-                        let positions: Vec<Vec3> = bytemuck::cast_vec(
-                            reader.read_positions().unwrap().collect::<Vec<[f32; 3]>>(),
-                        );
-
-                        let normals: Vec<Vec3> = bytemuck::cast_vec(
-                            reader.read_normals().unwrap().collect::<Vec<[f32; 3]>>(),
-                        );
-
-                        let indices: Vec<u32> = match reader.read_indices().unwrap() {
-                            ReadIndices::U8(iter) => iter.map(move |i| i as u32).collect(),
-                            ReadIndices::U16(iter) => iter.map(move |i| i as u32).collect(),
-                            ReadIndices::U32(iter) => iter.collect(),
-                        };
-
-                        builder.create_mesh(
-                            positions,
-                            normals
-                                .iter()
-                                .map(move |normal| Vertex {
-                                    normal: normal.extend(0.0),
-                                })
-                                .collect(),
-                            indices,
-                        )
-                    });
-
-                    builder.add_instance(*mesh_id, transform);
-                }
-            }
-
-            for child in node.children() {
-                load_node(builder, meshes, buffers, camera_data, transform, child);
-            }
-        }
-
-        let (document, buffers, _images) = gltf::import(path).unwrap();
-
-        let mut meshes = HashMap::new();
-        let mut camera_data: Option<CameraData> = None;
-
-        for node in document.default_scene().unwrap().nodes() {
-            load_node(
-                self,
-                &mut meshes,
-                &buffers,
-                &mut camera_data,
-                transform,
-                node,
-            );
-        }
-
-        camera_data
-    }
-
-    pub fn build(&self, gpu: &Gpu) -> Scene {
+    pub fn build(&self) -> Scene {
         // Create mesh (bottom level) acceleration structures
 
         let mut mesh_accel_structs = Vec::with_capacity(self.meshes.len());
@@ -210,19 +260,19 @@ impl SceneBuilder {
         for i in 0..self.meshes.len() {
             let mesh = &self.meshes[i];
 
-            let position_buffer = gpu.create_filled_buffer(
+            let position_buffer = self.gpu.create_filled_buffer(
                 BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
                     | BufferUsage::SHADER_DEVICE_ADDRESS,
                 &mesh.positions,
             );
 
-            let vertex_buffer = gpu.create_filled_buffer(
+            let vertex_buffer = self.gpu.create_filled_buffer(
                 BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
                     | BufferUsage::SHADER_DEVICE_ADDRESS,
                 &mesh.vertices,
             );
 
-            let index_buffer = gpu.create_filled_buffer(
+            let index_buffer = self.gpu.create_filled_buffer(
                 BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
                     | BufferUsage::SHADER_DEVICE_ADDRESS,
                 &mesh.indices,
@@ -233,8 +283,8 @@ impl SceneBuilder {
                 index_buffer: index_buffer.clone(),
             });
 
-            gpu.execute(|commands| {
-                mesh_accel_structs.push(gpu.create_accel_struct(
+            self.gpu.execute(|commands| {
+                mesh_accel_structs.push(self.gpu.create_accel_struct(
                     true,
                     AccelerationStructureGeometries::Triangles(vec![
                         AccelerationStructureGeometryTrianglesData {
@@ -256,17 +306,18 @@ impl SceneBuilder {
 
         // Create instance info buffer
 
-        let built_instance_buffer = gpu.create_filled_buffer(
+        let built_instance_buffer = self.gpu.create_filled_buffer(
             BufferUsage::STORAGE_BUFFER,
             &self
                 .instances
                 .iter()
                 .map(|instance| {
-                    let mesh = &meshes[instance.mesh_id.0];
+                    let mesh = &meshes[instance.mesh_id.index()];
 
                     BuiltInstance {
                         vertices: mesh.vertex_buffer.device_address().unwrap().into(),
                         indices: mesh.index_buffer.device_address().unwrap().into(),
+                        material: instance.material,
                     }
                 })
                 .collect::<Vec<BuiltInstance>>(),
@@ -274,7 +325,7 @@ impl SceneBuilder {
 
         // Create top level acceleration structure
 
-        let instance_buffer = gpu.create_filled_buffer(
+        let instance_buffer = self.gpu.create_filled_buffer(
             BufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY
                 | BufferUsage::SHADER_DEVICE_ADDRESS,
             &self
@@ -289,15 +340,15 @@ impl SceneBuilder {
                     ],
                     instance_custom_index_and_mask: Packed24_8::new(i as u32, 0xFF),
                     instance_shader_binding_table_record_offset_and_flags: Packed24_8::new(0, 0),
-                    acceleration_structure_reference: mesh_accel_structs[instance.mesh_id.0]
+                    acceleration_structure_reference: mesh_accel_structs[instance.mesh_id.index()]
                         .device_address()
                         .into(),
                 })
                 .collect::<Vec<AccelerationStructureInstance>>(),
         );
 
-        let (accel_struct, _) = gpu.execute(move |commands| {
-            gpu.create_accel_struct(
+        let (accel_struct, _) = self.gpu.execute(move |commands| {
+            self.gpu.create_accel_struct(
                 false,
                 AccelerationStructureGeometries::Instances(
                     AccelerationStructureGeometryInstancesData::new(
@@ -318,6 +369,7 @@ impl SceneBuilder {
 
             meshes,
             instance_buffer: built_instance_buffer,
+            textures: self.textures.clone(),
         }
     }
 }

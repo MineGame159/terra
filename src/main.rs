@@ -1,35 +1,47 @@
 #![feature(iter_array_chunks)]
 
 mod gpu;
+mod model;
 mod scene;
 
-use crate::gpu::{DescriptorInfo, Gpu};
-use crate::scene::{CameraData, SceneBuilder};
+use std::{
+    fs::File,
+    io::BufWriter,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use glam::{FloatExt, Mat4, U8Vec3, UVec2, Vec3, Vec4, uvec2, vec3};
 use kdam::tqdm;
 use png::{BitDepth, ColorType};
 use smallvec::smallvec;
-use std::fs::File;
-use std::io::BufWriter;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use vulkano::DeviceSize;
-use vulkano::buffer::{BufferContents, BufferUsage, Subbuffer};
-use vulkano::command_buffer::CopyImageToBufferInfo;
-use vulkano::descriptor_set::layout::{DescriptorSetLayout, DescriptorType};
-use vulkano::descriptor_set::{DescriptorImageViewInfo, DescriptorSet, WriteDescriptorSet};
-use vulkano::format::Format;
-use vulkano::image::{ImageLayout, ImageUsage};
-use vulkano::memory::allocator::MemoryTypeFilter;
-use vulkano::pipeline::layout::{PipelineLayoutCreateInfo, PushConstantRange};
-use vulkano::pipeline::ray_tracing::{
-    RayTracingPipeline, RayTracingPipelineCreateInfo, RayTracingShaderGroupCreateInfo,
-    ShaderBindingTable,
+use vulkano::{
+    DeviceSize,
+    buffer::{BufferContents, BufferUsage, Subbuffer},
+    command_buffer::CopyImageToBufferInfo,
+    descriptor_set::{
+        DescriptorImageViewInfo, DescriptorSet, WriteDescriptorSet,
+        layout::{DescriptorSetLayout, DescriptorType},
+    },
+    format::Format,
+    image::{ImageLayout, ImageUsage},
+    memory::allocator::MemoryTypeFilter,
+    pipeline::{
+        Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
+        layout::{PipelineLayoutCreateInfo, PushConstantRange},
+        ray_tracing::{
+            RayTracingPipeline, RayTracingPipelineCreateInfo, RayTracingShaderGroupCreateInfo,
+            ShaderBindingTable,
+        },
+    },
+    shader::{ShaderModule, ShaderModuleCreateInfo, ShaderStages, spirv},
 };
-use vulkano::pipeline::{
-    Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
+
+use crate::{
+    gpu::{DescriptorInfo, Gpu},
+    model::load_model,
+    scene::{CameraData, SceneBuilder},
 };
-use vulkano::shader::{ShaderModule, ShaderModuleCreateInfo, ShaderStages, spirv};
 
 const SPV_RAY: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/ray.spv"));
 
@@ -87,14 +99,22 @@ fn main() {
         DescriptorInfo {
             stages: ShaderStages::RAYGEN,
             type_: DescriptorType::AccelerationStructure,
+            count: 1,
         },
         DescriptorInfo {
             stages: ShaderStages::CLOSEST_HIT,
             type_: DescriptorType::StorageBuffer,
+            count: 1,
+        },
+        DescriptorInfo {
+            stages: ShaderStages::CLOSEST_HIT,
+            type_: DescriptorType::CombinedImageSampler,
+            count: 1024,
         },
         DescriptorInfo {
             stages: ShaderStages::RAYGEN,
             type_: DescriptorType::StorageImage,
+            count: 1,
         },
     ]);
 
@@ -106,10 +126,15 @@ fn main() {
     const SAMPLES: u32 = 128;
     const BOUNCES: u32 = 8;
 
-    let mut scene_builder = SceneBuilder::new();
-    let camera_data = scene_builder.load_model("models/iron_howl_v8.glb", Mat4::IDENTITY);
+    let mut scene_builder = SceneBuilder::new(&gpu);
 
-    let scene = scene_builder.build(&gpu);
+    let camera_data = load_model(
+        &mut scene_builder,
+        "models/iron_howl_v8.glb",
+        Mat4::IDENTITY,
+    );
+
+    let scene = scene_builder.build();
 
     // Create set
 
@@ -125,8 +150,21 @@ fn main() {
         [
             WriteDescriptorSet::acceleration_structure(0, scene.accel_struct.clone()),
             WriteDescriptorSet::buffer(1, scene.instance_buffer.clone()),
-            WriteDescriptorSet::image_view_with_layout(
+            WriteDescriptorSet::image_view_with_layout_sampler_array(
                 2,
+                0,
+                scene.textures.iter().map(move |(view, sampler)| {
+                    (
+                        DescriptorImageViewInfo {
+                            image_view: view.clone(),
+                            image_layout: ImageLayout::ShaderReadOnlyOptimal,
+                        },
+                        sampler.clone(),
+                    )
+                }),
+            ),
+            WriteDescriptorSet::image_view_with_layout(
+                3,
                 DescriptorImageViewInfo {
                     image_view: image_view.clone(),
                     image_layout: ImageLayout::General,
