@@ -151,32 +151,63 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     let index_b = instance.indices[index_i + 1];
     let index_c = instance.indices[index_i + 2];
 
-    var normal = instance.vertices[index_a].normal * bary.x + instance.vertices[index_b].normal * bary.y + instance.vertices[index_c].normal * bary.z;
+    let normal = instance.vertices[index_a].normal * bary.x + instance.vertices[index_b].normal * bary.y + instance.vertices[index_c].normal * bary.z;
     let uv = instance.vertices[index_a].uv * bary.x + instance.vertices[index_b].uv * bary.y + instance.vertices[index_c].uv * bary.z;
 
-    normal = normalize(mul((float3x3) ObjectToWorld(), normal));
+    let N = normalize(mul((float3x3) ObjectToWorld(), normal));
 
     payload.hit = true;
 
     // Material
     let albedo = instance.material.albedo(uv);
-    let roughness = instance.material.roughness(uv);
+    let roughness = max(instance.material.roughness(uv), 0.001);
+    let metallic = instance.material.metallic(uv);
 
     // View direction
     let V = -WorldRayDirection();
+    let ffN = dot(N, V) < 0.0 ? -N : N;
 
-    // Modify ray
-    payload.new_origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + normal * 1e-4;
-    payload.new_direction = RandomCosineHemisphere(payload.rng, normal);
+    // F0: Surface reflection at 0 degrees
+    // Dielectric: 0.04, Metal: albedo
+    let F0 = lerp(float3(0.04), albedo, metallic);
 
-    // Light direction
-    let L = payload.new_direction;
+    // Calculate Fresnel at view angle to decide probability of specular reflection
+    let F_view = F0 + (1.0 - F0) * pow(1.0 - clamp(dot(ffN, V), 0.0, 1.0), 5.0);
+    // Approximate luminosity of Fresnel for probability
+    let specProb = dot(F_view, float3(0.299, 0.587, 0.114));
 
-    // Evaluate BRDF
-    let brdf = EvalDisneyDiffuse(albedo, roughness, normal, L, V);
+    // Boost specular probability for metals
+    var selectionProb = lerp(specProb, 1.0, metallic);
+    // Clamp to ensure we don't always/never sample one path
+    selectionProb = clamp(selectionProb, 0.05, 0.95);
 
-    // Modify ray color
-    payload.color = brdf * float.getPi();
+    payload.new_origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + ffN * 1e-4;
+
+    if (Random(payload.rng) < selectionProb) {
+        // --- Specular Path (GGX) ---
+        let sample = SampleGGX(payload.rng, ffN, V, roughness * roughness, F0);
+
+        if (dot(sample.weight, sample.weight) > 0.0) {
+            payload.new_direction = sample.L;
+            payload.color = sample.weight / selectionProb;
+        } else {
+            payload.hit = false;
+            payload.color = float3(0);
+        }
+    } else {
+        // --- Diffuse Path (Disney) ---
+        let transmission = 1.0 - F_view;
+        let diffuseAlbedo = albedo * (1.0 - metallic) * transmission;
+
+        payload.new_direction = RandomCosineHemisphere(payload.rng, ffN);
+        let L = payload.new_direction;
+
+        // Evaluate BRDF
+        let brdf = EvalDisneyDiffuse(diffuseAlbedo, roughness, ffN, L, V);
+
+        // Throughput = (BRDF * PI) / (1.0 - Probability)
+        payload.color = (brdf * float.getPi()) / (1.0 - selectionProb);
+    }
 }
 
 [shader("miss")]
