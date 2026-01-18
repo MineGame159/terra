@@ -37,6 +37,9 @@ struct Material {
     float roughness_factor;
     uint metallic_roughness_texture;
 
+    float4 emissive_factor;
+    uint emissive_texture;
+
     float3 albedo(float2 uv) {
         var albedo = albedo_factor.rgb;
 
@@ -66,6 +69,16 @@ struct Material {
 
         return roughness;
     }
+
+    float3 emissive(float2 uv) {
+        var emissive = emissive_factor.rgb;
+
+        if (emissive_texture > 0) {
+            emissive *= textures[emissive_texture - 1].SampleLevelZero(uv).rgb;
+        }
+
+        return emissive;
+    }
 }
 
 struct Instance {
@@ -91,9 +104,12 @@ struct RayPayload {
     uint rng;
 
     bool hit;
+
     float3 new_origin;
     float3 new_direction;
+
     float3 color;
+    float3 emissive;
 }
 
 [shader("raygen")]
@@ -126,6 +142,8 @@ void RayGen() {
             light += color * payload.color;
             break;
         }
+
+        light += color * payload.emissive;
 
         ray.Origin = payload.new_origin;
         ray.Direction = payload.new_direction;
@@ -208,6 +226,9 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
         // Throughput = (BRDF * PI) / (1.0 - Probability)
         payload.color = (brdf * float.getPi()) / (1.0 - selectionProb);
     }
+
+    // Emissive
+    payload.emissive = instance.material.emissive(uv);
 }
 
 [shader("miss")]

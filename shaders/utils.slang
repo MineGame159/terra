@@ -54,6 +54,10 @@ float3 RandomCosineHemisphere(inout uint state, float3 N) {
     return localDir.x * T + localDir.y * B + localDir.z * N;
 }
 
+float3 EvalLambertian(float3 albedo) {
+    return albedo / float.getPi();
+}
+
 float3 EvalDisneyDiffuse(float3 albedo, float roughness, float3 N, float3 L, float3 V) {
     // 1. Calculate Dot Products
     let dotNL = clamp(dot(N, L), 0.0, 1.0); // N dot Light
@@ -76,6 +80,31 @@ float3 EvalDisneyDiffuse(float3 albedo, float roughness, float3 N, float3 L, flo
     // 5. Combine
     // Note: We divide by PI here because it is a BRDF.
     return albedo * (1.0 / float.getPi()) * F_L * F_V;
+}
+
+float3 EvalOrenNayar(float3 albedo, float roughness, float3 N, float3 L, float3 V) {
+    let dotNL = clamp(dot(N, L), 0.0, 1.0);
+    let dotNV = clamp(dot(N, V), 0.0, 1.0);
+
+    // Oren-Nayar roughness constants
+    let a = roughness * roughness;
+    let A = 1.0 - 0.5 * (a / (a + 0.33));
+    let B = 0.45 * (a / (a + 0.09));
+
+    // Calculate cosine of azimuth angles difference
+    // This is a simplified way to get cos(phi_i - phi_r)
+    // derived from the vector projection identity
+    let lightPlane = normalize(L - N * dotNL);
+    let viewPlane = normalize(V - N * dotNV);
+    let cosPhiDiff = dot(lightPlane, viewPlane);
+
+    let alpha = max(acos(dotNL), acos(dotNV));
+    let beta  = min(acos(dotNL), acos(dotNV));
+
+    let C = sin(alpha) * tan(beta);
+
+    // Final BRDF
+    return (albedo / float.getPi()) * (A + B * max(0.0, cosPhiDiff) * C);
 }
 
 float G_Smith(float dotNL, float dotNV, float roughness) {

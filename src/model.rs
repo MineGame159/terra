@@ -156,6 +156,9 @@ impl ModelLoader<'_, '_> {
             roughness_factor: mat.pbr_metallic_roughness().roughness_factor(),
             metallic_roughness_texture: self
                 .get_texture_id(mat.pbr_metallic_roughness().metallic_roughness_texture()),
+
+            emissive_factor: Vec3::from_array(mat.emissive_factor()).extend(0.0),
+            emissive_texture: self.get_texture_id(mat.emissive_texture()),
         }
     }
 }

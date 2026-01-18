@@ -96,6 +96,9 @@ pub struct Material {
     pub metallic_factor: f32,
     pub roughness_factor: f32,
     pub metallic_roughness_texture: TextureId,
+
+    pub emissive_factor: Vec4,
+    pub emissive_texture: TextureId,
 }
 
 impl Default for Material {
@@ -104,9 +107,12 @@ impl Default for Material {
             albedo_factor: Vec4::ONE,
             albedo_texture: TextureId::empty(),
 
-            metallic_factor: 1.0,
-            roughness_factor: 1.0,
+            metallic_factor: 0.0,
+            roughness_factor: 0.5,
             metallic_roughness_texture: TextureId::empty(),
+
+            emissive_factor: Vec4::ZERO,
+            emissive_texture: TextureId::empty(),
         }
     }
 }
