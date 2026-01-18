@@ -16,6 +16,8 @@ struct PushConstants {
     uint2 size;
     uint bounces;
     uint sample;
+    float envIntensity;
+    float envRotation;
 }
 
 [vk_push_constant]
@@ -101,7 +103,10 @@ StructuredBuffer<Instance> instances;
 [vk_binding(2, 0)]
 ConstantBuffer<Sampler2D<float3>[]> textures;
 
-[vk_binding(3, 0), format("rgba32f")]
+[vk_binding(3, 0)]
+Sampler2D<float3> environmentMap;
+
+[vk_binding(4, 0), format("rgba32f")]
 RWTexture2D image;
 
 struct RayPayload {
@@ -273,6 +278,10 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
 
 [shader("miss")]
 void Miss(inout RayPayload payload) {
+    let dir = normalize(WorldRayDirection());
+    let uv = CartesianToSpherical(dir, pc.envRotation);
+    let envColor = min(environmentMap.SampleLevelZero(uv), float3(20));
+
     payload.hit = false;
-    payload.color = GetBackground(WorldRayDirection());
+    payload.color = envColor * pc.envIntensity;
 }

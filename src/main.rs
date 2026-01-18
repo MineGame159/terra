@@ -5,7 +5,7 @@ mod model;
 mod scene;
 
 use std::{
-    fs::File,
+    fs::{File, read},
     io::BufWriter,
     sync::Arc,
     time::{Duration, Instant},
@@ -24,7 +24,10 @@ use vulkano::{
         layout::{DescriptorSetLayout, DescriptorType},
     },
     format::Format,
-    image::{ImageLayout, ImageUsage},
+    image::{
+        ImageLayout, ImageUsage,
+        sampler::{Sampler, SamplerCreateInfo},
+    },
     memory::allocator::MemoryTypeFilter,
     pipeline::{
         Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
@@ -36,6 +39,7 @@ use vulkano::{
     },
     shader::{ShaderModule, ShaderModuleCreateInfo, ShaderStages, spirv},
 };
+use zune_hdr::HdrDecoder;
 
 use crate::{
     gpu::{DescriptorInfo, Gpu},
@@ -62,6 +66,8 @@ struct PushConstants {
     height: u32,
     bounces: u32,
     sample: u32,
+    env_intensity: f32,
+    env_rotation: f32,
 }
 
 impl Camera {
@@ -112,6 +118,11 @@ fn main() {
             count: 1024,
         },
         DescriptorInfo {
+            stages: ShaderStages::MISS,
+            type_: DescriptorType::CombinedImageSampler,
+            count: 1,
+        },
+        DescriptorInfo {
             stages: ShaderStages::RAYGEN,
             type_: DescriptorType::StorageImage,
             count: 1,
@@ -119,6 +130,39 @@ fn main() {
     ]);
 
     let (pipeline, shader_binding_table) = create_pipeline(&gpu, set_layout.clone());
+
+    // Load environment map
+
+    let (_, env_image_view) = {
+        let env_bytes = read("ibl/pure_sky.hdr").unwrap();
+        let mut env_decoder = HdrDecoder::new(env_bytes);
+
+        let env_pixels: Vec<f32> = env_decoder
+            .decode()
+            .unwrap()
+            .iter()
+            .array_chunks::<3>()
+            .flat_map(move |[r, g, b]| [*r, *g, *b, 1.0])
+            .collect();
+
+        let env_size = env_decoder
+            .get_dimensions()
+            .map(move |(width, height)| uvec2(width as u32, height as u32))
+            .unwrap();
+
+        gpu.create_filled_image(
+            env_size,
+            Format::R32G32B32A32_SFLOAT,
+            ImageUsage::SAMPLED,
+            bytemuck::cast_slice(&env_pixels),
+        )
+    };
+
+    let env_sampler = Sampler::new(
+        gpu.device.clone(),
+        SamplerCreateInfo::simple_repeat_linear_no_mipmap(),
+    )
+    .unwrap();
 
     // Load scene
 
@@ -163,8 +207,16 @@ fn main() {
                     )
                 }),
             ),
-            WriteDescriptorSet::image_view_with_layout(
+            WriteDescriptorSet::image_view_with_layout_sampler(
                 3,
+                DescriptorImageViewInfo {
+                    image_view: env_image_view.clone(),
+                    image_layout: ImageLayout::ShaderReadOnlyOptimal,
+                },
+                env_sampler.clone(),
+            ),
+            WriteDescriptorSet::image_view_with_layout(
+                4,
                 DescriptorImageViewInfo {
                     image_view: image_view.clone(),
                     image_layout: ImageLayout::General,
@@ -190,6 +242,8 @@ fn main() {
         height: SIZE.y,
         bounces: BOUNCES,
         sample: 0,
+        env_intensity: 1.0,
+        env_rotation: 0.0,
     };
 
     println!();
@@ -329,7 +383,7 @@ fn create_pipeline(
         PipelineLayoutCreateInfo {
             set_layouts: vec![set_layout],
             push_constant_ranges: vec![PushConstantRange {
-                stages: ShaderStages::RAYGEN,
+                stages: ShaderStages::RAYGEN | ShaderStages::MISS,
                 offset: 0,
                 size: size_of::<PushConstants>() as u32,
             }],

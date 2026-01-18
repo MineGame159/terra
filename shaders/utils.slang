@@ -200,3 +200,22 @@ uint CustomInstanceIndex() {
         result:$$uint = OpLoad builtin(InstanceCustomIndexKHR:uint);
     };
 }
+
+float2 CartesianToSpherical(float3 dir, float rotation) {
+    // atan2(z, x) gives the angle on the horizontal plane
+    // We add rotation here to spin the skybox
+    float phi = atan2(dir.z, dir.x) + rotation;
+
+    // acos(y) gives the vertical angle (0 is up, PI is down)
+    // Note: Assuming Y is Up. If Z is Up, swap y and z logic.
+    float theta = acos(dir.y);
+
+    // Map to [0, 1] range
+    float u = phi * 0.159154943; // 1 / (2 * PI)
+    float v = theta * 0.318309886; // 1 / PI
+
+    // Wrap u to stay within [0, 1] if rotation pushed it out
+    u = frac(u);
+
+    return float2(u, v);
+}
