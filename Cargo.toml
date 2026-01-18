@@ -11,3 +11,4 @@ gltf = { version = "1.4.1", features = ["KHR_texture_transform"] }
 png = "0.18.0"
 bytemuck = "1.24.0"
 kdam = "0.6.4"
+bevy_mikktspace = "0.16.1"

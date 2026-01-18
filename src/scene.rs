@@ -24,6 +24,7 @@ use crate::gpu::Gpu;
 pub struct Vertex {
     pub normal: Vec4,
     pub uv: Vec4,
+    pub tangent: Vec4,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -99,6 +100,8 @@ pub struct Material {
 
     pub emissive_factor: Vec4,
     pub emissive_texture: TextureId,
+
+    pub normal_texture: TextureId,
 }
 
 impl Default for Material {
@@ -113,6 +116,8 @@ impl Default for Material {
 
             emissive_factor: Vec4::ZERO,
             emissive_texture: TextureId::empty(),
+
+            normal_texture: TextureId::empty(),
         }
     }
 }

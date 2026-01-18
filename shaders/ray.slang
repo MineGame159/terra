@@ -27,6 +27,8 @@ struct Vertex {
 
     float2 uv;
     float2 _pad1;
+
+    float4 tangent;
 }
 
 struct Material {
@@ -39,6 +41,8 @@ struct Material {
 
     float4 emissive_factor;
     uint emissive_texture;
+
+    uint normal_texture;
 
     float3 albedo(float2 uv) {
         var albedo = albedo_factor.rgb;
@@ -171,10 +175,44 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
 
     let normal = instance.vertices[index_a].normal * bary.x + instance.vertices[index_b].normal * bary.y + instance.vertices[index_c].normal * bary.z;
     let uv = instance.vertices[index_a].uv * bary.x + instance.vertices[index_b].uv * bary.y + instance.vertices[index_c].uv * bary.z;
+    let tangent = instance.vertices[index_a].tangent * bary.x + instance.vertices[index_b].tangent * bary.y + instance.vertices[index_c].tangent * bary.z;
 
-    let N = normalize(mul((float3x3) ObjectToWorld(), normal));
+    var N = normalize(mul((float3x3) ObjectToWorld(), normal));
 
     payload.hit = true;
+
+    // Normal mapping
+    if (instance.material.normal_texture > 0) {
+        // A. Transform Tangent to World Space
+        let T_geom = normalize(mul((float3x3) ObjectToWorld(), tangent.xyz));
+
+        // B. Gram-Schmidt Re-orthogonalization
+        // Interpolation makes T and N no longer perfectly perpendicular.
+        // We subtract the part of T that points in the direction of N.
+        let T = normalize(T_geom - dot(T_geom, N) * N);
+
+        // C. Calculate Bitangent
+        // We use the 'w' component (handedness) to flip the cross product if needed
+        // (This handles mirrored UVs automatically)
+        let B = cross(N, T) * tangent.w;
+
+        // D. Create TBN Matrix (Tangent -> World)
+        let TBN = float3x3(T, B, N);
+
+        // E. Sample Normal Map
+        // Assume texture is linear RGB (standard for normal maps)
+        let rawNormal = textures[instance.material.normal_texture - 1].SampleLevelZero(uv).rgb;
+
+        // F. Decode Normal ([0,1] -> [-1,1])
+        let localNormal = normalize(rawNormal * 2.0 - 1.0);
+
+        // G. Apply TBN transformation
+        // Note: Check if you need to flip Y for OpenGL/DirectX conventions.
+        // If your normal map looks "inverted" (bumps look like holes),
+        // try: localNormal.y *= -1.0;
+
+        N = normalize(mul(localNormal, TBN));
+    }
 
     // Material
     let albedo = instance.material.albedo(uv);

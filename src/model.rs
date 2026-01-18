@@ -1,12 +1,13 @@
 use std::{collections::HashMap, path::Path};
 
+use bevy_mikktspace::{Geometry, generate_tangents};
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4, uvec2};
 use gltf::{
-    Image, Mesh, Node, Primitive,
+    Image, Mesh, Node, Primitive, Texture,
     camera::Projection,
     mesh::{Mode, util::ReadIndices},
     scene::Transform,
-    texture::{Info, MagFilter, MinFilter, WrappingMode},
+    texture::{MagFilter, MinFilter, WrappingMode},
 };
 use vulkano::{
     format::Format,
@@ -69,7 +70,7 @@ impl ModelLoader<'_, '_> {
     }
 
     fn get_mesh_id(&mut self, mesh: &Mesh, primitive: &Primitive) -> MeshId {
-        *self.meshes.entry(mesh.index()).or_insert_with(|| {
+        *self.meshes.entry(mesh.index()).or_insert({
             let reader = primitive.reader(|buffer| Some(&self.buffer_data[buffer.index()]));
 
             let positions: Vec<Vec3> =
@@ -92,14 +93,35 @@ impl ModelLoader<'_, '_> {
                 ReadIndices::U32(iter) => iter.collect(),
             };
 
+            let tangents: Vec<Vec4> = match reader.read_tangents() {
+                Some(tangents) => bytemuck::cast_vec(tangents.collect()),
+                None => {
+                    let mut tangents = vec![Vec4::ZERO; positions.len()];
+
+                    let mut geometry = MeshGeometry {
+                        positions: &positions,
+                        normals: &normals,
+                        uvs: &uvs,
+                        indices: &indices,
+                        tangents: &mut tangents,
+                    };
+
+                    assert!(generate_tangents(&mut geometry));
+
+                    tangents
+                }
+            };
+
             self.builder.create_mesh(
                 positions,
                 normals
                     .iter()
                     .zip(uvs)
-                    .map(move |(normal, uv)| Vertex {
+                    .zip(tangents)
+                    .map(move |((normal, uv), tangent)| Vertex {
                         normal: normal.extend(0.0),
                         uv: uv.extend(0.0).extend(0.0),
+                        tangent,
                     })
                     .collect(),
                 indices,
@@ -119,17 +141,17 @@ impl ModelLoader<'_, '_> {
         })
     }
 
-    fn get_texture_id(&mut self, info: Option<Info>) -> TextureId {
+    fn get_texture_id(&mut self, info: Option<Texture>) -> TextureId {
         match info {
-            Some(info) => {
-                let index = info.texture().index();
+            Some(texture) => {
+                let index = texture.index();
 
                 if let Some(id) = self.textures.get(&index) {
                     return *id;
                 }
 
-                let image_id = self.get_image_id(&info.texture().source());
-                let sampler = &info.texture().sampler();
+                let image_id = self.get_image_id(&texture.source());
+                let sampler = &texture.sampler();
 
                 let id = self.builder.create_texture(
                     image_id,
@@ -150,15 +172,25 @@ impl ModelLoader<'_, '_> {
     fn get_material(&mut self, mat: &gltf::Material) -> Material {
         Material {
             albedo_factor: Vec4::from_array(mat.pbr_metallic_roughness().base_color_factor()),
-            albedo_texture: self.get_texture_id(mat.pbr_metallic_roughness().base_color_texture()),
+            albedo_texture: self.get_texture_id(
+                mat.pbr_metallic_roughness()
+                    .base_color_texture()
+                    .map(move |info| info.texture()),
+            ),
 
             metallic_factor: mat.pbr_metallic_roughness().metallic_factor(),
             roughness_factor: mat.pbr_metallic_roughness().roughness_factor(),
-            metallic_roughness_texture: self
-                .get_texture_id(mat.pbr_metallic_roughness().metallic_roughness_texture()),
+            metallic_roughness_texture: self.get_texture_id(
+                mat.pbr_metallic_roughness()
+                    .metallic_roughness_texture()
+                    .map(move |info| info.texture()),
+            ),
 
             emissive_factor: Vec3::from_array(mat.emissive_factor()).extend(0.0),
-            emissive_texture: self.get_texture_id(mat.emissive_texture()),
+            emissive_texture: self
+                .get_texture_id(mat.emissive_texture().map(move |info| info.texture())),
+
+            normal_texture: self.get_texture_id(mat.normal_texture().map(|info| info.texture())),
         }
     }
 }
@@ -185,6 +217,45 @@ pub fn load_model(
     }
 
     loader.camera_data
+}
+
+struct MeshGeometry<'a> {
+    positions: &'a [Vec3],
+    normals: &'a [Vec3],
+    uvs: &'a [Vec2],
+    indices: &'a [u32],
+
+    tangents: &'a mut [Vec4],
+}
+
+impl Geometry for MeshGeometry<'_> {
+    fn num_faces(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    fn num_vertices_of_face(&self, _face: usize) -> usize {
+        3
+    }
+
+    fn position(&self, face: usize, vert: usize) -> [f32; 3] {
+        let index = self.indices[face * 3 + vert] as usize;
+        self.positions[index].to_array()
+    }
+
+    fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
+        let index = self.indices[face * 3 + vert] as usize;
+        self.normals[index].to_array()
+    }
+
+    fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
+        let index = self.indices[face * 3 + vert] as usize;
+        self.uvs[index].to_array()
+    }
+
+    fn set_tangent_encoded(&mut self, tangent: [f32; 4], face: usize, vert: usize) {
+        let index = self.indices[face * 3 + vert] as usize;
+        self.tangents[index] = Vec4::from_array(tangent);
+    }
 }
 
 fn convert_transform(transform: &Transform) -> Mat4 {
