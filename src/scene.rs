@@ -9,7 +9,7 @@ use vulkano::{
         AccelerationStructureGeometryTrianglesData, AccelerationStructureInstance, GeometryFlags,
     },
     buffer::{BufferContents, BufferUsage, IndexBuffer, Subbuffer},
-    format::Format,
+    format::{Format, NumericFormat},
     image::{
         ImageUsage,
         sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode},
@@ -163,9 +163,9 @@ impl<'a> SceneBuilder<'a> {
             pixels.len()
         );
 
-        let (format, pixels) = match format {
-            Format::R8G8B8_UNORM => (
-                Format::R8G8B8A8_UNORM,
+        let (format, pixels) = match format.components() {
+            [8, 8, 8, 0] => (
+                format_3_to_4(format),
                 Cow::Owned(
                     pixels
                         .iter()
@@ -174,8 +174,8 @@ impl<'a> SceneBuilder<'a> {
                         .collect(),
                 ),
             ),
-            Format::R16G16B16_UNORM => (
-                Format::R8G8B8A8_UNORM,
+            [16, 16, 16, 0] => (
+                format_3_to_4(format),
                 Cow::Owned(bytemuck::cast_vec(
                     bytemuck::cast_slice::<u8, u16>(pixels)
                         .iter()
@@ -184,8 +184,8 @@ impl<'a> SceneBuilder<'a> {
                         .collect::<Vec<u16>>(),
                 )),
             ),
-            Format::R32G32B32_SFLOAT => (
-                Format::R8G8B8A8_UNORM,
+            [32, 32, 32, 0] => (
+                format_3_to_4(format),
                 Cow::Owned(bytemuck::cast_vec(
                     bytemuck::cast_slice::<u8, f32>(pixels)
                         .iter()
@@ -382,5 +382,15 @@ impl<'a> SceneBuilder<'a> {
             instance_buffer: built_instance_buffer,
             textures: self.textures.clone(),
         }
+    }
+}
+
+fn format_3_to_4(format: Format) -> Format {
+    match format {
+        Format::R8G8B8_UNORM => Format::R8G8B8A8_UNORM,
+        Format::R8G8B8_SRGB => Format::R8G8B8A8_SRGB,
+        Format::R16G16B16_UNORM => Format::R16G16B16A16_UNORM,
+        Format::R32G32B32_SFLOAT => Format::R32G32B32A32_SFLOAT,
+        _ => unimplemented!(),
     }
 }

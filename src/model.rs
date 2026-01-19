@@ -129,19 +129,20 @@ impl ModelLoader<'_, '_> {
         })
     }
 
-    fn get_image_id(&mut self, img: &Image) -> ImageId {
+    fn get_image_id(&mut self, img: &Image, srgb: bool) -> ImageId {
         *self.images.entry(img.index()).or_insert_with(|| {
             let data = &self.image_data[img.index()];
+            let format = convert_format(data.format);
 
             self.builder.create_image(
                 uvec2(data.width, data.height),
-                convert_format(data.format),
+                if srgb { to_srgb(format) } else { format },
                 &data.pixels,
             )
         })
     }
 
-    fn get_texture_id(&mut self, info: Option<Texture>) -> TextureId {
+    fn get_texture_id(&mut self, info: Option<Texture>, srgb: bool) -> TextureId {
         match info {
             Some(texture) => {
                 let index = texture.index();
@@ -150,7 +151,7 @@ impl ModelLoader<'_, '_> {
                     return *id;
                 }
 
-                let image_id = self.get_image_id(&texture.source());
+                let image_id = self.get_image_id(&texture.source(), srgb);
                 let sampler = &texture.sampler();
 
                 let id = self.builder.create_texture(
@@ -176,6 +177,7 @@ impl ModelLoader<'_, '_> {
                 mat.pbr_metallic_roughness()
                     .base_color_texture()
                     .map(move |info| info.texture()),
+                true,
             ),
 
             metallic_factor: mat.pbr_metallic_roughness().metallic_factor(),
@@ -184,13 +186,15 @@ impl ModelLoader<'_, '_> {
                 mat.pbr_metallic_roughness()
                     .metallic_roughness_texture()
                     .map(move |info| info.texture()),
+                false,
             ),
 
             emissive_factor: Vec3::from_array(mat.emissive_factor()).extend(0.0),
             emissive_texture: self
-                .get_texture_id(mat.emissive_texture().map(move |info| info.texture())),
+                .get_texture_id(mat.emissive_texture().map(move |info| info.texture()), true),
 
-            normal_texture: self.get_texture_id(mat.normal_texture().map(|info| info.texture())),
+            normal_texture: self
+                .get_texture_id(mat.normal_texture().map(|info| info.texture()), false),
         }
     }
 }
@@ -285,6 +289,22 @@ fn convert_format(format: gltf::image::Format) -> Format {
         gltf::image::Format::R16G16B16A16 => Format::R16G16B16A16_UNORM,
         gltf::image::Format::R32G32B32FLOAT => Format::R32G32B32_SFLOAT,
         gltf::image::Format::R32G32B32A32FLOAT => Format::R32G32B32A32_SFLOAT,
+    }
+}
+
+fn to_srgb(format: Format) -> Format {
+    match format {
+        Format::R8_UNORM => Format::R8_SRGB,
+        Format::R8G8_UNORM => Format::R8G8_SRGB,
+        Format::R8G8B8_UNORM => Format::R8G8B8_SRGB,
+        Format::R8G8B8A8_UNORM => Format::R8G8B8A8_SRGB,
+        Format::R16_UNORM => unimplemented!("16 bit textures can't be sRGB"),
+        Format::R16G16_UNORM => unimplemented!("16 bit textures can't be sRGB"),
+        Format::R16G16B16_UNORM => unimplemented!("16 bit textures can't be sRGB"),
+        Format::R16G16B16A16_UNORM => unimplemented!("16 bit textures can't be sRGB"),
+        Format::R32G32B32_SFLOAT => unimplemented!("32 bit textures can't be sRGB"),
+        Format::R32G32B32A32_SFLOAT => unimplemented!("32 bit textures can't be sRGB"),
+        _ => unimplemented!("invalid GLTF image format"),
     }
 }
 
