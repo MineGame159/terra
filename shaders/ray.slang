@@ -149,6 +149,7 @@ RWTexture2D image;
 
 struct RayPayload {
     uint rng;
+    uint depth;
 
     bool hit;
 
@@ -166,7 +167,7 @@ void RayGen() {
     if (any(id >= pc.size)) return;
 
     // Create ray
-    var rng = id.y * pc.size.x + id.x + pc.sample * 729683;
+    var rng = Tea(id.y * pc.size.x + id.x, pc.sample);
     let uv = float2(id.x + Random(rng), id.y + Random(rng)) / pc.size;
 
     RayDesc ray;
@@ -179,23 +180,40 @@ void RayGen() {
     var color = float3(1);
     var light = float3(0);
 
-    for (uint i = 0; i < pc.bounces; i++) {
-        RayPayload payload;
-        payload.rng = rng * (i + 1);
+    RayPayload payload;
+    payload.rng = rng;
 
+    for (uint i = 0; i < pc.bounces; i++) {
+        // Trace
+        payload.depth = i;
         TraceRay(accelStruct, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
 
+        // Miss
         if (!payload.hit) {
             light += color * payload.color;
             break;
         }
 
+        // Hit
         light += color * payload.emissive;
 
         ray.Origin = payload.new_origin;
         ray.Direction = payload.new_direction;
 
         color *= payload.color;
+
+        // Russian Roulette
+        if (i > 3) {
+            let p = clamp(max(color.r, max(color.g, color.b)), 0.05, 1.0);
+
+            // If the ray is very dark, giving it a chance to die
+            if (Random(payload.rng) > p) {
+                break;
+            }
+
+            // If it survives, boost energy so the average remains correct
+            color *= 1.0 / p;
+        }
     }
 
     // Accumulate color
@@ -209,7 +227,7 @@ void AnyHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes a
     let instance = instances[CustomInstanceIndex()];
     let vertex = interpolate_attributes(attributes.barycentrics, instance);
 
-    if (instance.material.alpha(vertex.uv) < 0.5) {
+    if (instance.material.alpha(vertex.uv) < Random(payload.rng)) {
         IgnoreHit();
     }
 }
@@ -239,7 +257,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     let ccProb = clamp(ccFresnel * clearcoat, 0.0, 0.99);
 
     // New origin
-    payload.new_origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + ffgeoN * 1e-4;
+    payload.new_origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + ffgeoN * (1e-4 + RayTCurrent() * 1e-5);
 
     if (Random(payload.rng) < ccProb) {
         // --- Clear coat ---
@@ -271,35 +289,12 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
         var N = geoN;
 
         if (instance.material.normal_texture > 0) {
-            // A. Transform Tangent to World Space
-            let T_geom = normalize(mul((float3x3) ObjectToWorld(), vertex.tangent.xyz));
+            let N_map = textures[instance.material.normal_texture - 1].SampleLevelZero(vertex.uv).xyz;
+            N = NormalMap(vertex.tangent, N, N_map);
 
-            // B. Gram-Schmidt Re-orthogonalization
-            // Interpolation makes T and N no longer perfectly perpendicular.
-            // We subtract the part of T that points in the direction of N.
-            let T = normalize(T_geom - dot(T_geom, N) * N);
-
-            // C. Calculate Bitangent
-            // We use the 'w' component (handedness) to flip the cross product if needed
-            // (This handles mirrored UVs automatically)
-            let B = cross(N, T) * vertex.tangent.w;
-
-            // D. Create TBN Matrix (Tangent -> World)
-            let TBN = float3x3(T, B, N);
-
-            // E. Sample Normal Map
-            // Assume texture is linear RGB (standard for normal maps)
-            let rawNormal = textures[instance.material.normal_texture - 1].SampleLevelZero(vertex.uv).rgb;
-
-            // F. Decode Normal ([0,1] -> [-1,1])
-            let localNormal = normalize(rawNormal * 2.0 - 1.0);
-
-            // G. Apply TBN transformation
-            // Note: Check if you need to flip Y for OpenGL/DirectX conventions.
-            // If your normal map looks "inverted" (bumps look like holes),
-            // try: localNormal.y *= -1.0;
-
-            N = normalize(mul(localNormal, TBN));
+            if (dot(N, geoN) < 0.0) {
+                N = geoN;
+            }
         }
 
         let ffN = dot(N, V) < 0.0 ? -N : N;
@@ -314,9 +309,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
         let specProb = dot(F_view, float3(0.299, 0.587, 0.114));
 
         // Boost specular probability for metals
-        var selectionProb = lerp(specProb, 1.0, metallic);
-        // Clamp to ensure we don't always/never sample one path
-        selectionProb = clamp(selectionProb, 0.05, 0.95);
+        let selectionProb = clamp(lerp(specProb, 1.0, metallic), 0.05, 1.0);
 
         if (Random(payload.rng) < selectionProb) {
             // --- Specular Path (GGX) ---
@@ -324,7 +317,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
 
             if (dot(sample.weight, sample.weight) > 0.0) {
                 payload.new_direction = sample.L;
-                payload.color = (sample.weight / selectionProb) * baseLayerWeight;
+                payload.color = (sample.weight / max(selectionProb, 0.001)) * baseLayerWeight;
             } else {
                 payload.hit = false;
                 payload.color = float3(0);
@@ -341,7 +334,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
             let brdf = EvalDisneyDiffuse(diffuseAlbedo, roughness, ffN, L, V);
 
             // Throughput = (BRDF * PI) / (1.0 - Probability)
-            payload.color = ((brdf * float.getPi()) / (1.0 - selectionProb)) * baseLayerWeight;
+            payload.color = ((brdf * float.getPi()) / max(1.0 - selectionProb, 0.001)) * baseLayerWeight;
         }
 
         // Emissive
@@ -353,10 +346,12 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
 void Miss(inout RayPayload payload) {
     let dir = normalize(WorldRayDirection());
     let uv = CartesianToSpherical(dir, pc.envRotation);
-    let envColor = min(environmentMap.SampleLevelZero(uv), float3(20));
+
+    var color = environmentMap.SampleLevelZero(uv) * pc.envIntensity;
+    if (payload.depth > 0) color = HueClamp(color, 20);
 
     payload.hit = false;
-    payload.color = envColor * pc.envIntensity;
+    payload.color = color;
 }
 
 Vertex interpolate_attributes(float2 barycentrics, Instance instance) {
