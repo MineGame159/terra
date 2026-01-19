@@ -171,7 +171,7 @@ impl ModelLoader<'_, '_> {
     }
 
     fn get_material(&mut self, mat: &gltf::Material) -> Material {
-        Material {
+        let mut material = Material {
             albedo_factor: Vec4::from_array(mat.pbr_metallic_roughness().base_color_factor()),
             albedo_texture: self.get_texture_id(
                 mat.pbr_metallic_roughness()
@@ -194,8 +194,27 @@ impl ModelLoader<'_, '_> {
                 .get_texture_id(mat.emissive_texture().map(move |info| info.texture()), true),
 
             normal_texture: self
-                .get_texture_id(mat.normal_texture().map(|info| info.texture()), false),
+                .get_texture_id(mat.normal_texture().map(move |info| info.texture()), false),
+
+            ..Default::default()
+        };
+
+        if let Some(cc) = mat.clearcoat() {
+            material.clearcoat_factor = cc.clearcoat_factor();
+            material.clearcoat_texture = self.get_texture_id(
+                cc.clearcoat_texture().map(move |info| info.texture()),
+                false,
+            );
+
+            material.clearcoat_roughness_factor = cc.clearcoat_roughness_factor();
+            material.clearcoat_roughness_texture = self.get_texture_id(
+                cc.clearcoat_roughness_texture()
+                    .map(move |info| info.texture()),
+                false,
+            );
         }
+
+        material
     }
 }
 

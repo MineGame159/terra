@@ -7,9 +7,13 @@ edition = "2024"
 vulkano = "0.35.2"
 smallvec = "1.15.1"
 glam = { version = "0.30.10", features = ["bytemuck"] }
-gltf = { version = "1.4.1", features = ["KHR_texture_transform", "KHR_lights_punctual"] }
 png = "0.18.0"
 bytemuck = "1.24.0"
 kdam = "0.6.4"
 bevy_mikktspace = "0.16.1"
 zune-hdr = "0.4.0"
+
+[dependencies.gltf]
+git = "https://github.com/gltf-rs/gltf.git"
+rev = "3def30c9caf96f2dbc85238179ea5a6152c5cf22"
+features = ["KHR_texture_transform", "KHR_lights_punctual", "KHR_materials_clearcoat"]

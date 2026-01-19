@@ -44,6 +44,12 @@ struct Material {
     float4 emissive_factor;
     uint emissive_texture;
 
+    float clearcoat_factor;
+    uint clearcoat_texture;
+
+    float clearcoat_roughness_factor;
+    uint clearcoat_roughness_texture;
+
     uint normal_texture;
 
     float3 albedo(float2 uv) {
@@ -84,6 +90,26 @@ struct Material {
         }
 
         return emissive;
+    }
+
+    float clearcoat(float2 uv) {
+        var clearcoat = clearcoat_factor;
+
+        if (clearcoat_texture > 0) {
+            clearcoat *= textures[clearcoat_texture - 1].SampleLevelZero(uv).r;
+        }
+
+        return clearcoat;
+    }
+
+    float clearcoat_roughness(float2 uv) {
+        var clearcoat_roughness = clearcoat_roughness_factor;
+
+        if (clearcoat_roughness_texture > 0) {
+            clearcoat_roughness *= textures[clearcoat_roughness_texture - 1].SampleLevelZero(uv).g;
+        }
+
+        return clearcoat_roughness;
     }
 }
 
@@ -183,97 +209,133 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     let tangent = instance.vertices[index_a].tangent * bary.x + instance.vertices[index_b].tangent * bary.y + instance.vertices[index_c].tangent * bary.z;
 
     let geoN = normalize(mul((float3x3) ObjectToWorld(), normal));
-    var N = geoN;
 
     payload.hit = true;
 
-    // Normal mapping
-    if (instance.material.normal_texture > 0) {
-        // A. Transform Tangent to World Space
-        let T_geom = normalize(mul((float3x3) ObjectToWorld(), tangent.xyz));
-
-        // B. Gram-Schmidt Re-orthogonalization
-        // Interpolation makes T and N no longer perfectly perpendicular.
-        // We subtract the part of T that points in the direction of N.
-        let T = normalize(T_geom - dot(T_geom, N) * N);
-
-        // C. Calculate Bitangent
-        // We use the 'w' component (handedness) to flip the cross product if needed
-        // (This handles mirrored UVs automatically)
-        let B = cross(N, T) * tangent.w;
-
-        // D. Create TBN Matrix (Tangent -> World)
-        let TBN = float3x3(T, B, N);
-
-        // E. Sample Normal Map
-        // Assume texture is linear RGB (standard for normal maps)
-        let rawNormal = textures[instance.material.normal_texture - 1].SampleLevelZero(uv).rgb;
-
-        // F. Decode Normal ([0,1] -> [-1,1])
-        let localNormal = normalize(rawNormal * 2.0 - 1.0);
-
-        // G. Apply TBN transformation
-        // Note: Check if you need to flip Y for OpenGL/DirectX conventions.
-        // If your normal map looks "inverted" (bumps look like holes),
-        // try: localNormal.y *= -1.0;
-
-        N = normalize(mul(localNormal, TBN));
-    }
-
     // Material
-    let albedo = instance.material.albedo(uv);
-    let roughness = max(instance.material.roughness(uv), 0.001);
-    let metallic = instance.material.metallic(uv);
+    let clearcoat = instance.material.clearcoat(uv);
+    let clearcoat_roughness = instance.material.clearcoat_roughness(uv);
 
     // View direction
     let V = -WorldRayDirection();
-    let ffN = dot(N, V) < 0.0 ? -N : N;
-    let ffgeoN = dot(N, V) < 0.0 ? -geoN : geoN;
+    let ffgeoN = dot(geoN, V) < 0.0 ? -geoN : geoN;
 
-    // F0: Surface reflection at 0 degrees
-    // Dielectric: 0.04, Metal: albedo
-    let F0 = lerp(float3(0.04), albedo, metallic);
+    // Dielectric Fresnel (IOR 1.5 -> F0 = 0.04)
+    let ccF0 = float3(0.04);
+    let ccFresnel = 0.04 + (1.0 - 0.04) * pow(1.0 - clamp(dot(ffgeoN, V), 0.0, 1.0), 5.0);
 
-    // Calculate Fresnel at view angle to decide probability of specular reflection
-    let F_view = F0 + (1.0 - F0) * pow(1.0 - clamp(dot(ffN, V), 0.0, 1.0), 5.0);
-    // Approximate luminosity of Fresnel for probability
-    let specProb = dot(F_view, float3(0.299, 0.587, 0.114));
+    // Probability of hitting the clearcoat is determined by strength and Fresnel
+    let ccProb = clamp(ccFresnel * clearcoat, 0.0, 0.99);
 
-    // Boost specular probability for metals
-    var selectionProb = lerp(specProb, 1.0, metallic);
-    // Clamp to ensure we don't always/never sample one path
-    selectionProb = clamp(selectionProb, 0.05, 0.95);
-
+    // New origin
     payload.new_origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + ffgeoN * 1e-4;
 
-    if (Random(payload.rng) < selectionProb) {
-        // --- Specular Path (GGX) ---
-        let sample = SampleGGX(payload.rng, ffN, V, roughness * roughness, F0);
+    if (Random(payload.rng) < ccProb) {
+        // --- Clear coat ---
+
+        // Reuse SampleGGX with clearcoat roughness and F0=0.04
+        let sample = SampleGGX(payload.rng, ffgeoN, V, clearcoat_roughness * clearcoat_roughness, ccF0);
 
         if (dot(sample.weight, sample.weight) > 0.0) {
             payload.new_direction = sample.L;
-            payload.color = sample.weight / selectionProb;
+            // Weight must be normalized by the probability of choosing this path
+            payload.color = sample.weight / ccProb;
         } else {
             payload.hit = false;
             payload.color = float3(0);
         }
+
+        // Emissive doesn't typically come from the clearcoat layer itself
+        payload.emissive = float3(0);
     } else {
-        // --- Diffuse Path (Disney) ---
-        let transmission = 1.0 - F_view;
-        let diffuseAlbedo = albedo * (1.0 - metallic) * transmission;
+        // --- Base layer ---
+        let baseLayerWeight = 1.0 / (1.0 - ccProb);
 
-        payload.new_direction = RandomCosineHemisphere(payload.rng, ffN);
-        let L = payload.new_direction;
+        // Material
+        let albedo = instance.material.albedo(uv);
+        let roughness = max(instance.material.roughness(uv), 0.001);
+        let metallic = instance.material.metallic(uv);
 
-        // Evaluate BRDF
-        let brdf = EvalDisneyDiffuse(diffuseAlbedo, roughness, ffN, L, V);
+        // Normal mapping
+        var N = geoN;
 
-        // Throughput = (BRDF * PI) / (1.0 - Probability)
-        payload.color = (brdf * float.getPi()) / (1.0 - selectionProb);
+        if (instance.material.normal_texture > 0) {
+            // A. Transform Tangent to World Space
+            let T_geom = normalize(mul((float3x3) ObjectToWorld(), tangent.xyz));
+
+            // B. Gram-Schmidt Re-orthogonalization
+            // Interpolation makes T and N no longer perfectly perpendicular.
+            // We subtract the part of T that points in the direction of N.
+            let T = normalize(T_geom - dot(T_geom, N) * N);
+
+            // C. Calculate Bitangent
+            // We use the 'w' component (handedness) to flip the cross product if needed
+            // (This handles mirrored UVs automatically)
+            let B = cross(N, T) * tangent.w;
+
+            // D. Create TBN Matrix (Tangent -> World)
+            let TBN = float3x3(T, B, N);
+
+            // E. Sample Normal Map
+            // Assume texture is linear RGB (standard for normal maps)
+            let rawNormal = textures[instance.material.normal_texture - 1].SampleLevelZero(uv).rgb;
+
+            // F. Decode Normal ([0,1] -> [-1,1])
+            let localNormal = normalize(rawNormal * 2.0 - 1.0);
+
+            // G. Apply TBN transformation
+            // Note: Check if you need to flip Y for OpenGL/DirectX conventions.
+            // If your normal map looks "inverted" (bumps look like holes),
+            // try: localNormal.y *= -1.0;
+
+            N = normalize(mul(localNormal, TBN));
+        }
+
+        let ffN = dot(N, V) < 0.0 ? -N : N;
+
+        // F0: Surface reflection at 0 degrees
+        // Dielectric: 0.04, Metal: albedo
+        let F0 = lerp(float3(0.04), albedo, metallic);
+
+        // Calculate Fresnel at view angle to decide probability of specular reflection
+        let F_view = F0 + (1.0 - F0) * pow(1.0 - clamp(dot(ffN, V), 0.0, 1.0), 5.0);
+        // Approximate luminosity of Fresnel for probability
+        let specProb = dot(F_view, float3(0.299, 0.587, 0.114));
+
+        // Boost specular probability for metals
+        var selectionProb = lerp(specProb, 1.0, metallic);
+        // Clamp to ensure we don't always/never sample one path
+        selectionProb = clamp(selectionProb, 0.05, 0.95);
+
+        if (Random(payload.rng) < selectionProb) {
+            // --- Specular Path (GGX) ---
+            let sample = SampleGGX(payload.rng, ffN, V, roughness * roughness, F0);
+
+            if (dot(sample.weight, sample.weight) > 0.0) {
+                payload.new_direction = sample.L;
+                payload.color = (sample.weight / selectionProb) * baseLayerWeight;
+            } else {
+                payload.hit = false;
+                payload.color = float3(0);
+            }
+        } else {
+            // --- Diffuse Path (Disney) ---
+            let transmission = 1.0 - F_view;
+            let diffuseAlbedo = albedo * (1.0 - metallic) * transmission;
+
+            payload.new_direction = RandomCosineHemisphere(payload.rng, ffN);
+            let L = payload.new_direction;
+
+            // Evaluate BRDF
+            let brdf = EvalDisneyDiffuse(diffuseAlbedo, roughness, ffN, L, V);
+
+            // Throughput = (BRDF * PI) / (1.0 - Probability)
+            payload.color = ((brdf * float.getPi()) / (1.0 - selectionProb)) * baseLayerWeight;
+        }
+
+        // Emissive
+        payload.emissive = instance.material.emissive(uv) * baseLayerWeight;
     }
-
-    // Emissive
-    payload.emissive = instance.material.emissive(uv);
 }
 
 [shader("miss")]

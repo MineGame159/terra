@@ -101,6 +101,12 @@ pub struct Material {
     pub emissive_factor: Vec4,
     pub emissive_texture: TextureId,
 
+    pub clearcoat_factor: f32,
+    pub clearcoat_texture: TextureId,
+
+    pub clearcoat_roughness_factor: f32,
+    pub clearcoat_roughness_texture: TextureId,
+
     pub normal_texture: TextureId,
 }
 
@@ -116,6 +122,12 @@ impl Default for Material {
 
             emissive_factor: Vec4::ZERO,
             emissive_texture: TextureId::empty(),
+
+            clearcoat_factor: 0.0,
+            clearcoat_texture: TextureId::empty(),
+
+            clearcoat_roughness_factor: 0.0,
+            clearcoat_roughness_texture: TextureId::empty(),
 
             normal_texture: TextureId::empty(),
         }
