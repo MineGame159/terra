@@ -108,6 +108,8 @@ pub struct Material {
     pub clearcoat_roughness_texture: TextureId,
 
     pub normal_texture: TextureId,
+
+    pub opaque: u32,
 }
 
 impl Default for Material {
@@ -130,6 +132,8 @@ impl Default for Material {
             clearcoat_roughness_texture: TextureId::empty(),
 
             normal_texture: TextureId::empty(),
+
+            opaque: 0,
         }
     }
 }
@@ -311,7 +315,7 @@ impl<'a> SceneBuilder<'a> {
                     true,
                     AccelerationStructureGeometries::Triangles(vec![
                         AccelerationStructureGeometryTrianglesData {
-                            flags: GeometryFlags::OPAQUE,
+                            flags: GeometryFlags::empty(),
                             vertex_data: Some(position_buffer.into_bytes()),
                             vertex_stride: size_of::<Vec3>() as u32,
                             max_vertex: (mesh.vertices.len() - 1) as u32,
@@ -362,7 +366,10 @@ impl<'a> SceneBuilder<'a> {
                         instance.transform.row(2).to_array(),
                     ],
                     instance_custom_index_and_mask: Packed24_8::new(i as u32, 0xFF),
-                    instance_shader_binding_table_record_offset_and_flags: Packed24_8::new(0, 0),
+                    instance_shader_binding_table_record_offset_and_flags: Packed24_8::new(
+                        if instance.material.opaque == 1 { 0 } else { 1 },
+                        0,
+                    ),
                     acceleration_structure_reference: mesh_accel_structs[instance.mesh_id.index()]
                         .device_address()
                         .into(),

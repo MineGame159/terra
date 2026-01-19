@@ -52,6 +52,8 @@ struct Material {
 
     uint normal_texture;
 
+    uint opaque;
+
     float3 albedo(float2 uv) {
         var albedo = albedo_factor.rgb;
 
@@ -111,6 +113,16 @@ struct Material {
 
         return clearcoat_roughness;
     }
+
+    float alpha(float2 uv) {
+        var alpha = albedo_factor.a;
+
+        if (albedo_texture > 0) {
+            alpha *= textures[albedo_texture - 1].SampleLevelZero(uv).a;
+        }
+
+        return alpha;
+    }
 }
 
 struct Instance {
@@ -127,7 +139,7 @@ RaytracingAccelerationStructure accelStruct;
 StructuredBuffer<Instance> instances;
 
 [vk_binding(2, 0)]
-ConstantBuffer<Sampler2D<float3>[]> textures;
+ConstantBuffer<Sampler2D<float4>[]> textures;
 
 [vk_binding(3, 0)]
 Sampler2D<float3> environmentMap;
@@ -192,29 +204,28 @@ void RayGen() {
     image[pos] = image[pos] * (1 - weight) + float4(light, 1) * weight;
 }
 
+[shader("anyhit")]
+void AnyHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attributes) {
+    let instance = instances[CustomInstanceIndex()];
+    let vertex = interpolate_attributes(attributes.barycentrics, instance);
+
+    if (instance.material.alpha(vertex.uv) < 0.5) {
+        IgnoreHit();
+    }
+}
+
 [shader("closesthit")]
 void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attributes) {
-    let b = attributes.barycentrics;
-    let bary = float3(1.0 - b.x - b.y, b.x, b.y);
-
     let instance = instances[CustomInstanceIndex()];
+    let vertex = interpolate_attributes(attributes.barycentrics, instance);
 
-    let index_i = PrimitiveIndex() * 3;
-    let index_a = instance.indices[index_i + 0];
-    let index_b = instance.indices[index_i + 1];
-    let index_c = instance.indices[index_i + 2];
-
-    let normal = instance.vertices[index_a].normal * bary.x + instance.vertices[index_b].normal * bary.y + instance.vertices[index_c].normal * bary.z;
-    let uv = instance.vertices[index_a].uv * bary.x + instance.vertices[index_b].uv * bary.y + instance.vertices[index_c].uv * bary.z;
-    let tangent = instance.vertices[index_a].tangent * bary.x + instance.vertices[index_b].tangent * bary.y + instance.vertices[index_c].tangent * bary.z;
-
-    let geoN = normalize(mul((float3x3) ObjectToWorld(), normal));
+    let geoN = normalize(mul((float3x3) ObjectToWorld(), vertex.normal));
 
     payload.hit = true;
 
     // Material
-    let clearcoat = instance.material.clearcoat(uv);
-    let clearcoat_roughness = instance.material.clearcoat_roughness(uv);
+    let clearcoat = instance.material.clearcoat(vertex.uv);
+    let clearcoat_roughness = instance.material.clearcoat_roughness(vertex.uv);
 
     // View direction
     let V = -WorldRayDirection();
@@ -252,16 +263,16 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
         let baseLayerWeight = 1.0 / (1.0 - ccProb);
 
         // Material
-        let albedo = instance.material.albedo(uv);
-        let roughness = max(instance.material.roughness(uv), 0.001);
-        let metallic = instance.material.metallic(uv);
+        let albedo = instance.material.albedo(vertex.uv);
+        let roughness = max(instance.material.roughness(vertex.uv), 0.001);
+        let metallic = instance.material.metallic(vertex.uv);
 
         // Normal mapping
         var N = geoN;
 
         if (instance.material.normal_texture > 0) {
             // A. Transform Tangent to World Space
-            let T_geom = normalize(mul((float3x3) ObjectToWorld(), tangent.xyz));
+            let T_geom = normalize(mul((float3x3) ObjectToWorld(), vertex.tangent.xyz));
 
             // B. Gram-Schmidt Re-orthogonalization
             // Interpolation makes T and N no longer perfectly perpendicular.
@@ -271,14 +282,14 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
             // C. Calculate Bitangent
             // We use the 'w' component (handedness) to flip the cross product if needed
             // (This handles mirrored UVs automatically)
-            let B = cross(N, T) * tangent.w;
+            let B = cross(N, T) * vertex.tangent.w;
 
             // D. Create TBN Matrix (Tangent -> World)
             let TBN = float3x3(T, B, N);
 
             // E. Sample Normal Map
             // Assume texture is linear RGB (standard for normal maps)
-            let rawNormal = textures[instance.material.normal_texture - 1].SampleLevelZero(uv).rgb;
+            let rawNormal = textures[instance.material.normal_texture - 1].SampleLevelZero(vertex.uv).rgb;
 
             // F. Decode Normal ([0,1] -> [-1,1])
             let localNormal = normalize(rawNormal * 2.0 - 1.0);
@@ -334,7 +345,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
         }
 
         // Emissive
-        payload.emissive = instance.material.emissive(uv) * baseLayerWeight;
+        payload.emissive = instance.material.emissive(vertex.uv) * baseLayerWeight;
     }
 }
 
@@ -346,4 +357,21 @@ void Miss(inout RayPayload payload) {
 
     payload.hit = false;
     payload.color = envColor * pc.envIntensity;
+}
+
+Vertex interpolate_attributes(float2 barycentrics, Instance instance) {
+    let bary = float3(1.0 - barycentrics.x - barycentrics.y, barycentrics.x, barycentrics.y);
+
+    let index_i = PrimitiveIndex() * 3;
+    let index_a = instance.indices[index_i + 0];
+    let index_b = instance.indices[index_i + 1];
+    let index_c = instance.indices[index_i + 2];
+
+    Vertex vertex;
+
+    vertex.normal = instance.vertices[index_a].normal * bary.x + instance.vertices[index_b].normal * bary.y + instance.vertices[index_c].normal * bary.z;
+    vertex.uv = instance.vertices[index_a].uv * bary.x + instance.vertices[index_b].uv * bary.y + instance.vertices[index_c].uv * bary.z;
+    vertex.tangent = instance.vertices[index_a].tangent * bary.x + instance.vertices[index_b].tangent * bary.y + instance.vertices[index_c].tangent * bary.z;
+
+    return vertex;
 }

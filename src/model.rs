@@ -5,6 +5,7 @@ use glam::{Mat4, Quat, Vec2, Vec3, Vec4, uvec2};
 use gltf::{
     Image, Mesh, Node, Primitive, Texture,
     camera::Projection,
+    material::AlphaMode,
     mesh::{Mode, util::ReadIndices},
     scene::Transform,
     texture::{MagFilter, MinFilter, WrappingMode},
@@ -195,6 +196,12 @@ impl ModelLoader<'_, '_> {
 
             normal_texture: self
                 .get_texture_id(mat.normal_texture().map(move |info| info.texture()), false),
+
+            opaque: if mat.alpha_mode() == AlphaMode::Opaque {
+                1
+            } else {
+                0
+            },
 
             ..Default::default()
         };

@@ -108,12 +108,12 @@ fn main() {
             count: 1,
         },
         DescriptorInfo {
-            stages: ShaderStages::CLOSEST_HIT,
+            stages: ShaderStages::ANY_HIT | ShaderStages::CLOSEST_HIT,
             type_: DescriptorType::StorageBuffer,
             count: 1,
         },
         DescriptorInfo {
-            stages: ShaderStages::CLOSEST_HIT,
+            stages: ShaderStages::ANY_HIT | ShaderStages::CLOSEST_HIT,
             type_: DescriptorType::CombinedImageSampler,
             count: 1024,
         },
@@ -134,7 +134,7 @@ fn main() {
     // Load environment map
 
     let (_, env_image_view) = {
-        let env_bytes = read("ibl/pure_sky.hdr").unwrap();
+        let env_bytes = read("ibl/sunrise_field.hdr").unwrap();
         let mut env_decoder = HdrDecoder::new(env_bytes);
 
         let env_pixels: Vec<f32> = env_decoder
@@ -399,14 +399,19 @@ fn create_pipeline(
             stages: smallvec![
                 PipelineShaderStageCreateInfo::new(module.entry_point("RayGen").unwrap()),
                 PipelineShaderStageCreateInfo::new(module.entry_point("Miss").unwrap()),
+                PipelineShaderStageCreateInfo::new(module.entry_point("AnyHit").unwrap()),
                 PipelineShaderStageCreateInfo::new(module.entry_point("ClosestHit").unwrap()),
             ],
             groups: smallvec![
                 RayTracingShaderGroupCreateInfo::General { general_shader: 0 },
                 RayTracingShaderGroupCreateInfo::General { general_shader: 1 },
                 RayTracingShaderGroupCreateInfo::TrianglesHit {
-                    closest_hit_shader: Some(2),
-                    any_hit_shader: None
+                    closest_hit_shader: Some(3),
+                    any_hit_shader: None,
+                },
+                RayTracingShaderGroupCreateInfo::TrianglesHit {
+                    closest_hit_shader: Some(3),
+                    any_hit_shader: Some(2),
                 },
             ],
             max_pipeline_ray_recursion_depth: 1,
