@@ -110,6 +110,8 @@ pub struct Material {
     pub normal_texture: TextureId,
 
     pub opaque: u32,
+
+    pub _pad: u32,
 }
 
 impl Default for Material {
@@ -134,6 +136,8 @@ impl Default for Material {
             normal_texture: TextureId::empty(),
 
             opaque: 0,
+
+            _pad: 0,
         }
     }
 }

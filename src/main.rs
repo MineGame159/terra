@@ -1,5 +1,6 @@
 #![feature(iter_array_chunks)]
 
+mod color;
 mod gpu;
 mod model;
 mod scene;
@@ -11,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use glam::{FloatExt, Mat4, U8Vec3, UVec2, Vec3, Vec4, uvec2, vec3};
+use glam::{Mat4, U8Vec3, UVec2, Vec3, Vec4, uvec2, vec3};
 use kdam::tqdm;
 use png::{BitDepth, ColorType};
 use smallvec::smallvec;
@@ -42,6 +43,7 @@ use vulkano::{
 use zune_hdr::HdrDecoder;
 
 use crate::{
+    color::ToneMappingOperator,
     gpu::{DescriptorInfo, Gpu},
     model::load_model,
     scene::{CameraData, SceneBuilder},
@@ -318,7 +320,12 @@ fn main() {
 
     // Read image buffer
 
-    let pixels: Vec<U8Vec3> = image_buffer.read().unwrap().iter().map(map_color).collect();
+    let pixels: Vec<U8Vec3> = image_buffer
+        .read()
+        .unwrap()
+        .iter()
+        .map(map_color::<color::ReinhardJodie>)
+        .collect();
 
     // Write pixels to image
 
@@ -336,25 +343,9 @@ fn main() {
         .unwrap();
 }
 
-fn luminance(v: Vec3) -> f32 {
-    v.dot(Vec3::new(0.2126, 0.7152, 0.0722))
-}
-
-fn reinhard_jodie(v: Vec3) -> Vec3 {
-    let l = luminance(v);
-    let tv = v / (Vec3::ONE + v);
-    let from = v / (1.0 + l);
-
-    Vec3::new(
-        from.x.lerp(tv.x, tv.x),
-        from.y.lerp(tv.y, tv.y),
-        from.z.lerp(tv.z, tv.z),
-    )
-}
-
-fn map_color(color: &Vec4) -> U8Vec3 {
+fn map_color<TMO: ToneMappingOperator>(color: &Vec4) -> U8Vec3 {
     let mut color = Vec3::new(color.x, color.y, color.z).max(Vec3::ZERO);
-    color = reinhard_jodie(color);
+    color = TMO::map(color);
 
     const GAMMA: f32 = 2.2;
     color = color.powf(1.0 / GAMMA);

@@ -54,6 +54,8 @@ struct Material {
 
     uint opaque;
 
+    uint _pad;
+
     float3 albedo(float2 uv) {
         var albedo = albedo_factor.rgb;
 
