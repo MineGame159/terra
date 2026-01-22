@@ -121,8 +121,6 @@ impl Gpu {
             Default::default(),
         ));
 
-        println!("Device: {}", physical_device.properties().device_name);
-
         Gpu {
             instance,
             physical_device,

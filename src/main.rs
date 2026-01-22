@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use clap::Parser;
 use glam::{Mat4, U8Vec3, UVec2, Vec3, Vec4, uvec2, vec3};
 use kdam::tqdm;
 use png::{BitDepth, ColorType};
@@ -50,6 +51,55 @@ use crate::{
 };
 
 const SPV_RAY: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/ray.spv"));
+
+fn parser_uvec2(str: &str) -> Result<UVec2, String> {
+    let mut split = str.split('x');
+
+    if let Some(x_str) = split.next() {
+        let x = match x_str.parse::<u32>() {
+            Ok(v) => v,
+            Err(e) => return Err(format!("{}, expected <WIDTH>x<HEIGHT>", e)),
+        };
+
+        if let Some(y_str) = split.next() {
+            let y = match y_str.parse::<u32>() {
+                Ok(v) => v,
+                Err(e) => return Err(format!("{}, expected <WIDTH>x<HEIGHT>", e)),
+            };
+
+            return Ok(uvec2(x, y));
+        }
+    }
+
+    Err(String::from("invalid format, expected <WIDTH>x<HEIGHT>"))
+}
+
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    /// Path to a GLTF file to render
+    model: String,
+
+    /// Output path for rendered image
+    #[arg(short, long, default_value = "image.png")]
+    out: String,
+
+    /// Size of rendered image
+    #[arg(long, value_parser = parser_uvec2, default_value = "1280x720")]
+    size: UVec2,
+
+    /// Number of samples per pixel
+    #[arg(short, long, default_value_t = 128)]
+    samples: u32,
+
+    /// Maximum number of bounces per pixel
+    #[arg(short, long, default_value_t = 8)]
+    bounces: u32,
+
+    /// Path to a HDR file to be used as an environment map
+    #[arg(short, long)]
+    env_map: Option<String>,
+}
 
 #[derive(BufferContents, Copy, Clone)]
 #[repr(C)]
@@ -101,6 +151,10 @@ fn main() {
 
     let gpu = Gpu::new();
 
+    // Parse CLI
+
+    let cli = Cli::parse();
+
     // Create pipeline
 
     let set_layout = gpu.create_set_layout(&[
@@ -131,33 +185,42 @@ fn main() {
         },
     ]);
 
-    let (pipeline, shader_binding_table) = create_pipeline(&gpu, set_layout.clone());
+    let (pipeline, shader_binding_table) =
+        create_pipeline(&gpu, set_layout.clone(), cli.env_map.is_some());
 
     // Load environment map
 
-    let (_, env_image_view) = {
-        let env_bytes = read("ibl/sunrise_field.hdr").unwrap();
-        let mut env_decoder = HdrDecoder::new(env_bytes);
+    let (_, env_image_view) = match &cli.env_map {
+        Some(path) => {
+            let env_bytes = read(path).unwrap();
+            let mut env_decoder = HdrDecoder::new(env_bytes);
 
-        let env_pixels: Vec<f32> = env_decoder
-            .decode()
-            .unwrap()
-            .iter()
-            .array_chunks::<3>()
-            .flat_map(move |[r, g, b]| [*r, *g, *b, 1.0])
-            .collect();
+            let env_pixels: Vec<f32> = env_decoder
+                .decode()
+                .unwrap()
+                .iter()
+                .array_chunks::<3>()
+                .flat_map(move |[r, g, b]| [*r, *g, *b, 1.0])
+                .collect();
 
-        let env_size = env_decoder
-            .get_dimensions()
-            .map(move |(width, height)| uvec2(width as u32, height as u32))
-            .unwrap();
+            let env_size = env_decoder
+                .get_dimensions()
+                .map(move |(width, height)| uvec2(width as u32, height as u32))
+                .unwrap();
 
-        gpu.create_filled_image(
-            env_size,
+            gpu.create_filled_image(
+                env_size,
+                Format::R32G32B32A32_SFLOAT,
+                ImageUsage::SAMPLED,
+                bytemuck::cast_slice(&env_pixels),
+            )
+        }
+        None => gpu.create_filled_image(
+            uvec2(1, 1),
             Format::R32G32B32A32_SFLOAT,
             ImageUsage::SAMPLED,
-            bytemuck::cast_slice(&env_pixels),
-        )
+            bytemuck::cast_slice(&[1.0, 1.0, 1.0, 1.0]),
+        ),
     };
 
     let env_sampler = Sampler::new(
@@ -168,24 +231,16 @@ fn main() {
 
     // Load scene
 
-    const SIZE: UVec2 = uvec2(1280, 720);
-    const SAMPLES: u32 = 128;
-    const BOUNCES: u32 = 8;
-
     let mut scene_builder = SceneBuilder::new(&gpu);
 
-    let camera_data = load_model(
-        &mut scene_builder,
-        "models/iron_howl_v8.glb",
-        Mat4::IDENTITY,
-    );
+    let camera_data = load_model(&mut scene_builder, &cli.model, Mat4::IDENTITY);
 
     let scene = scene_builder.build();
 
     // Create set
 
     let (image, image_view) = gpu.create_image(
-        SIZE,
+        cli.size,
         Format::R32G32B32A32_SFLOAT,
         ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST,
     );
@@ -238,22 +293,20 @@ fn main() {
                 look_at: Vec3::ZERO,
                 fov: 70.0,
             }),
-            SIZE.x as f32 / SIZE.y as f32,
+            cli.size.x as f32 / cli.size.y as f32,
         ),
-        width: SIZE.x,
-        height: SIZE.y,
-        bounces: BOUNCES,
+        width: cli.size.x,
+        height: cli.size.y,
+        bounces: cli.bounces,
         sample: 0,
         env_intensity: 1.0,
         env_rotation: 0.0,
     };
 
-    println!();
-
     let start = Instant::now();
     let mut average_duration = Duration::ZERO;
 
-    for _ in tqdm!(0..SAMPLES) {
+    for _ in tqdm!(0..cli.samples) {
         let (_, duration) = gpu.execute(|commands| {
             if pc.sample == 0 {
                 commands
@@ -282,13 +335,13 @@ fn main() {
                 commands
                     .trace_rays(
                         shader_binding_table.addresses().clone(),
-                        [SIZE.x, SIZE.y, 1],
+                        [cli.size.x, cli.size.y, 1],
                     )
                     .unwrap();
             }
         });
 
-        average_duration += duration / SAMPLES;
+        average_duration += duration / cli.samples;
 
         pc.sample += 1;
     }
@@ -306,7 +359,7 @@ fn main() {
     let image_buffer: Subbuffer<[Vec4]> = gpu.create_buffer(
         BufferUsage::TRANSFER_DST,
         MemoryTypeFilter::HOST_RANDOM_ACCESS,
-        (SIZE.x * SIZE.y) as DeviceSize,
+        (cli.size.x * cli.size.y) as DeviceSize,
     );
 
     gpu.execute(|commands| {
@@ -329,10 +382,10 @@ fn main() {
 
     // Write pixels to image
 
-    let file = File::create("image.png").unwrap();
+    let file = File::create(&cli.out).unwrap();
     let writer = BufWriter::new(file);
 
-    let mut encoder = png::Encoder::new(writer, SIZE.x, SIZE.y);
+    let mut encoder = png::Encoder::new(writer, cli.size.x, cli.size.y);
     encoder.set_color(ColorType::Rgb);
     encoder.set_depth(BitDepth::Eight);
 
@@ -360,6 +413,7 @@ fn map_color<TMO: ToneMappingOperator>(color: &Vec4) -> U8Vec3 {
 fn create_pipeline(
     gpu: &Gpu,
     set_layout: Arc<DescriptorSetLayout>,
+    env_map: bool,
 ) -> (Arc<RayTracingPipeline>, ShaderBindingTable) {
     let module = unsafe {
         ShaderModule::new(
@@ -389,7 +443,11 @@ fn create_pipeline(
         RayTracingPipelineCreateInfo {
             stages: smallvec![
                 PipelineShaderStageCreateInfo::new(module.entry_point("RayGen").unwrap()),
-                PipelineShaderStageCreateInfo::new(module.entry_point("Miss").unwrap()),
+                PipelineShaderStageCreateInfo::new(
+                    module
+                        .entry_point(if env_map { "MissEnvMap" } else { "MissGeneric" })
+                        .unwrap()
+                ),
                 PipelineShaderStageCreateInfo::new(module.entry_point("AnyHit").unwrap()),
                 PipelineShaderStageCreateInfo::new(module.entry_point("ClosestHit").unwrap()),
             ],

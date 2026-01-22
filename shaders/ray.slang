@@ -345,7 +345,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
 }
 
 [shader("miss")]
-void Miss(inout RayPayload payload) {
+void MissEnvMap(inout RayPayload payload) {
     let dir = normalize(WorldRayDirection());
     let uv = CartesianToSpherical(dir, pc.envRotation);
 
@@ -354,6 +354,14 @@ void Miss(inout RayPayload payload) {
 
     payload.hit = false;
     payload.color = color;
+}
+
+[shader("miss")]
+void MissGeneric(inout RayPayload payload) {
+    let dir = normalize(WorldRayDirection());
+
+    payload.hit = false;
+    payload.color = GetBackground(dir);
 }
 
 Vertex interpolate_attributes(float2 barycentrics, Instance instance) {
