@@ -108,7 +108,7 @@ void RayGen() {
     if (any(id >= pc.size)) return;
 
     // Create ray
-    var rng = Tea(id.y * pc.size.x + id.x, pc.sample);
+    var rng = Tea<16>(id.y * pc.size.x + id.x, pc.sample);
     let uv = float2(id.x + Random(rng), id.y + Random(rng)) / pc.size;
 
     RayDesc ray;
@@ -168,7 +168,9 @@ void AnyHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes a
     let instance = instances[CustomInstanceIndex()];
     let vertex = InterpolateAttributes(attributes.barycentrics, instance);
 
-    if (instance.material.alpha(vertex.uv) < Random(payload.rng)) {
+    var rng = Tea<2>(payload.rng, PrimitiveIndex() ^ (CustomInstanceIndex() << 16));
+
+    if (instance.material.alpha(vertex.uv) < Random(rng)) {
         IgnoreHit();
     }
 }
