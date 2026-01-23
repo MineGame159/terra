@@ -237,6 +237,9 @@ fn main() {
 
     let scene = scene_builder.build();
 
+    scene.print_stats();
+    println!();
+
     // Create set
 
     let (image, image_view) = gpu.create_image(

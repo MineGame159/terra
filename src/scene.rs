@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+use bytesize::ByteSize;
 use glam::{Mat4, UVec2, Vec3, Vec4, vec4};
 use vulkano::{
     DeviceAddress, Packed24_8,
@@ -56,6 +57,51 @@ pub struct Scene {
     pub instance_buffer: Subbuffer<[BuiltInstance]>,
     pub materials: Subbuffer<[Material]>,
     pub textures: Vec<(Arc<ImageView>, Arc<Sampler>)>,
+}
+
+impl Scene {
+    pub fn print_stats(&self) {
+        println!(
+            "Meshes: {} ({})",
+            self.meshes.len(),
+            ByteSize::b(
+                self.meshes
+                    .iter()
+                    .map(move |mesh| mesh.vertex_buffer.as_bytes().len()
+                        + mesh.index_buffer.as_bytes().len())
+                    .sum()
+            )
+        );
+
+        println!(
+            "Instances: {} ({})",
+            self.instance_buffer.len(),
+            ByteSize::b(self.instance_buffer.as_bytes().len())
+        );
+
+        println!(
+            "Materials: {} ({})",
+            self.materials.len(),
+            ByteSize::b(self.materials.as_bytes().len())
+        );
+
+        println!(
+            "Textures: {} ({})",
+            self.textures.len(),
+            ByteSize::b(
+                self.textures
+                    .iter()
+                    .map(move |(view, _)| view
+                        .image()
+                        .extent()
+                        .iter()
+                        .map(move |v| *v as u64)
+                        .product::<u64>()
+                        * view.image().format().block_size())
+                    .sum()
+            )
+        );
+    }
 }
 
 macro_rules! index_id {
