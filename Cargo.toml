@@ -14,8 +14,17 @@ bevy_mikktspace = "0.16.1"
 zune-hdr = "0.4.0"
 clap = { version = "4.5.54", features = ["derive"] }
 bytesize = "2.3.1"
+profiling = "=1.0.17"
 
 [dependencies.gltf]
 git = "https://github.com/gltf-rs/gltf.git"
 rev = "3def30c9caf96f2dbc85238179ea5a6152c5cf22"
 features = ["KHR_texture_transform", "KHR_lights_punctual", "KHR_materials_clearcoat"]
+
+[dependencies.tracy-client]
+version = "=0.18.4"
+features = ["flush-on-exit"]
+optional = true
+
+[features]
+tracy = ["dep:tracy-client", "profiling/profile-with-tracy"]

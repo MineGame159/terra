@@ -30,6 +30,7 @@ struct ModelLoader<'a, 'b> {
     camera_data: Option<CameraData>,
 }
 
+#[profiling::all_functions]
 impl ModelLoader<'_, '_> {
     fn load_node(&mut self, global_transform: Mat4, node: Node) {
         let local_transform = convert_transform(&node.transform());
@@ -74,29 +75,41 @@ impl ModelLoader<'_, '_> {
         *self.meshes.entry(mesh.index()).or_insert({
             let reader = primitive.reader(|buffer| Some(&self.buffer_data[buffer.index()]));
 
-            let positions: Vec<Vec3> =
-                bytemuck::cast_vec(reader.read_positions().unwrap().collect::<Vec<[f32; 3]>>());
+            let positions: Vec<Vec3> = {
+                profiling::scope!("positions");
+                bytemuck::cast_vec(reader.read_positions().unwrap().collect::<Vec<[f32; 3]>>())
+            };
 
-            let normals: Vec<Vec3> =
-                bytemuck::cast_vec(reader.read_normals().unwrap().collect::<Vec<[f32; 3]>>());
+            let normals: Vec<Vec3> = {
+                profiling::scope!("normals");
+                bytemuck::cast_vec(reader.read_normals().unwrap().collect::<Vec<[f32; 3]>>())
+            };
 
-            let uvs: Vec<Vec2> = bytemuck::cast_vec(
-                reader
-                    .read_tex_coords(0)
-                    .unwrap()
-                    .into_f32()
-                    .collect::<Vec<[f32; 2]>>(),
-            );
+            let uvs: Vec<Vec2> = {
+                profiling::scope!("uvs");
+                bytemuck::cast_vec(
+                    reader
+                        .read_tex_coords(0)
+                        .unwrap()
+                        .into_f32()
+                        .collect::<Vec<[f32; 2]>>(),
+                )
+            };
 
-            let indices: Vec<u32> = match reader.read_indices().unwrap() {
-                ReadIndices::U8(iter) => iter.map(move |i| i as u32).collect(),
-                ReadIndices::U16(iter) => iter.map(move |i| i as u32).collect(),
-                ReadIndices::U32(iter) => iter.collect(),
+            let indices: Vec<u32> = {
+                profiling::scope!("indices");
+                match reader.read_indices().unwrap() {
+                    ReadIndices::U8(iter) => iter.map(move |i| i as u32).collect(),
+                    ReadIndices::U16(iter) => iter.map(move |i| i as u32).collect(),
+                    ReadIndices::U32(iter) => iter.collect(),
+                }
             };
 
             let tangents: Vec<Vec4> = match reader.read_tangents() {
                 Some(tangents) => bytemuck::cast_vec(tangents.collect()),
                 None => {
+                    profiling::scope!("generate tangents");
+
                     let mut tangents = vec![Vec4::ZERO; positions.len()];
 
                     let mut geometry = MeshGeometry {

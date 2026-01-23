@@ -64,6 +64,7 @@ pub struct Gpu {
     pub command_allocator: Arc<StandardCommandBufferAllocator>,
 }
 
+#[profiling::all_functions]
 impl Gpu {
     pub fn new() -> Gpu {
         let vk = VulkanLibrary::new().unwrap();
@@ -425,13 +426,16 @@ impl Gpu {
 
         let start = Instant::now();
 
-        sync::now(self.device.clone())
-            .then_execute(self.queue.clone(), command_buffer)
-            .unwrap()
-            .then_signal_fence_and_flush()
-            .unwrap()
-            .wait(None)
-            .unwrap();
+        {
+            profiling::scope!("GPU execution");
+            sync::now(self.device.clone())
+                .then_execute(self.queue.clone(), command_buffer)
+                .unwrap()
+                .then_signal_fence_and_flush()
+                .unwrap()
+                .wait(None)
+                .unwrap();
+        }
 
         let duration = Instant::now() - start;
 

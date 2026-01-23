@@ -212,6 +212,7 @@ pub struct SceneBuilder<'a> {
     textures: Vec<(Arc<ImageView>, Arc<Sampler>)>,
 }
 
+#[profiling::all_functions]
 impl<'a> SceneBuilder<'a> {
     pub fn new(gpu: &'a Gpu) -> SceneBuilder<'a> {
         SceneBuilder {
@@ -232,104 +233,108 @@ impl<'a> SceneBuilder<'a> {
             pixels.len()
         );
 
-        let (format, pixels) = match format.components() {
-            [8, 8, 0, 0]
-                if !self
-                    .gpu
-                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
-            {
-                (
-                    format_2_to_4(format),
-                    Cow::Owned(
-                        pixels
-                            .iter()
-                            .array_chunks::<2>()
-                            .flat_map(|[r, g]| [*r, *g, *r, *g])
-                            .collect(),
-                    ),
-                )
+        let (format, pixels) = {
+            profiling::scope!("convert format");
+
+            match format.components() {
+                [8, 8, 0, 0]
+                    if !self
+                        .gpu
+                        .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_2_to_4(format),
+                        Cow::Owned(
+                            pixels
+                                .iter()
+                                .array_chunks::<2>()
+                                .flat_map(|[r, g]| [*r, *g, *r, *g])
+                                .collect(),
+                        ),
+                    )
+                }
+                [8, 8, 8, 0]
+                    if !self
+                        .gpu
+                        .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_3_to_4(format),
+                        Cow::Owned(
+                            pixels
+                                .iter()
+                                .array_chunks::<3>()
+                                .flat_map(|[r, g, b]| [*r, *g, *b, 0xFF])
+                                .collect(),
+                        ),
+                    )
+                }
+                [16, 16, 0, 0]
+                    if !self
+                        .gpu
+                        .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_2_to_4(format),
+                        Cow::Owned(bytemuck::cast_vec(
+                            bytemuck::cast_slice::<u8, u16>(pixels)
+                                .iter()
+                                .array_chunks::<2>()
+                                .flat_map(|[r, g]| [*r, *g, *r, *g])
+                                .collect::<Vec<u16>>(),
+                        )),
+                    )
+                }
+                [16, 16, 16, 0]
+                    if !self
+                        .gpu
+                        .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_3_to_4(format),
+                        Cow::Owned(bytemuck::cast_vec(
+                            bytemuck::cast_slice::<u8, u16>(pixels)
+                                .iter()
+                                .array_chunks::<3>()
+                                .flat_map(|[r, g, b]| [*r, *g, *b, 0xFFFF])
+                                .collect::<Vec<u16>>(),
+                        )),
+                    )
+                }
+                [32, 32, 0, 0]
+                    if !self
+                        .gpu
+                        .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_2_to_4(format),
+                        Cow::Owned(bytemuck::cast_vec(
+                            bytemuck::cast_slice::<u8, f32>(pixels)
+                                .iter()
+                                .array_chunks::<2>()
+                                .flat_map(|[r, g]| [*r, *g, *r, *g])
+                                .collect::<Vec<f32>>(),
+                        )),
+                    )
+                }
+                [32, 32, 32, 0]
+                    if !self
+                        .gpu
+                        .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_3_to_4(format),
+                        Cow::Owned(bytemuck::cast_vec(
+                            bytemuck::cast_slice::<u8, f32>(pixels)
+                                .iter()
+                                .array_chunks::<3>()
+                                .flat_map(|[r, g, b]| [*r, *g, *b, 1.0])
+                                .collect::<Vec<f32>>(),
+                        )),
+                    )
+                }
+                _ => (format, Cow::Borrowed(pixels)),
             }
-            [8, 8, 8, 0]
-                if !self
-                    .gpu
-                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
-            {
-                (
-                    format_3_to_4(format),
-                    Cow::Owned(
-                        pixels
-                            .iter()
-                            .array_chunks::<3>()
-                            .flat_map(|[r, g, b]| [*r, *g, *b, 0xFF])
-                            .collect(),
-                    ),
-                )
-            }
-            [16, 16, 0, 0]
-                if !self
-                    .gpu
-                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
-            {
-                (
-                    format_2_to_4(format),
-                    Cow::Owned(bytemuck::cast_vec(
-                        bytemuck::cast_slice::<u8, u16>(pixels)
-                            .iter()
-                            .array_chunks::<2>()
-                            .flat_map(|[r, g]| [*r, *g, *r, *g])
-                            .collect::<Vec<u16>>(),
-                    )),
-                )
-            }
-            [16, 16, 16, 0]
-                if !self
-                    .gpu
-                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
-            {
-                (
-                    format_3_to_4(format),
-                    Cow::Owned(bytemuck::cast_vec(
-                        bytemuck::cast_slice::<u8, u16>(pixels)
-                            .iter()
-                            .array_chunks::<3>()
-                            .flat_map(|[r, g, b]| [*r, *g, *b, 0xFFFF])
-                            .collect::<Vec<u16>>(),
-                    )),
-                )
-            }
-            [32, 32, 0, 0]
-                if !self
-                    .gpu
-                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
-            {
-                (
-                    format_2_to_4(format),
-                    Cow::Owned(bytemuck::cast_vec(
-                        bytemuck::cast_slice::<u8, f32>(pixels)
-                            .iter()
-                            .array_chunks::<2>()
-                            .flat_map(|[r, g]| [*r, *g, *r, *g])
-                            .collect::<Vec<f32>>(),
-                    )),
-                )
-            }
-            [32, 32, 32, 0]
-                if !self
-                    .gpu
-                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
-            {
-                (
-                    format_3_to_4(format),
-                    Cow::Owned(bytemuck::cast_vec(
-                        bytemuck::cast_slice::<u8, f32>(pixels)
-                            .iter()
-                            .array_chunks::<3>()
-                            .flat_map(|[r, g, b]| [*r, *g, *b, 1.0])
-                            .collect::<Vec<f32>>(),
-                    )),
-                )
-            }
-            _ => (format, Cow::Borrowed(pixels)),
         };
 
         let (_, view) = self
