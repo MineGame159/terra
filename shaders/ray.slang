@@ -1,4 +1,5 @@
 import "utils";
+import "materials";
 
 struct Camera {
     float3 origin;
@@ -56,74 +57,12 @@ struct Material {
 
     uint _pad;
 
-    float3 albedo(float2 uv) {
-        var albedo = albedo_factor.rgb;
-
-        if (albedo_texture > 0) {
-            albedo *= textures[albedo_texture - 1].SampleLevelZero(uv).rgb;
-        }
-
-        return albedo;
-    }
-
-    float metallic(float2 uv) {
-        var metallic = metallic_factor;
-
-        if (metallic_roughness_texture > 0) {
-            metallic *= textures[metallic_roughness_texture - 1].SampleLevelZero(uv).b;
-        }
-
-        return metallic;
-    }
-
-    float roughness(float2 uv) {
-        var roughness = roughness_factor;
-
-        if (metallic_roughness_texture > 0) {
-            roughness *= textures[metallic_roughness_texture - 1].SampleLevelZero(uv).g;
-        }
-
-        return roughness;
-    }
-
     float3 emissive(float2 uv) {
-        var emissive = emissive_factor.rgb;
-
-        if (emissive_texture > 0) {
-            emissive *= textures[emissive_texture - 1].SampleLevelZero(uv).rgb;
-        }
-
-        return emissive;
-    }
-
-    float clearcoat(float2 uv) {
-        var clearcoat = clearcoat_factor;
-
-        if (clearcoat_texture > 0) {
-            clearcoat *= textures[clearcoat_texture - 1].SampleLevelZero(uv).r;
-        }
-
-        return clearcoat;
-    }
-
-    float clearcoat_roughness(float2 uv) {
-        var clearcoat_roughness = clearcoat_roughness_factor;
-
-        if (clearcoat_roughness_texture > 0) {
-            clearcoat_roughness *= textures[clearcoat_roughness_texture - 1].SampleLevelZero(uv).g;
-        }
-
-        return clearcoat_roughness;
+        return emissive_factor.rgb * SampleTexture(emissive_texture, uv).rgb;
     }
 
     float alpha(float2 uv) {
-        var alpha = albedo_factor.a;
-
-        if (albedo_texture > 0) {
-            alpha *= textures[albedo_texture - 1].SampleLevelZero(uv).a;
-        }
-
-        return alpha;
+        return albedo_factor.a * SampleTexture(albedo_texture, uv).a;
     }
 }
 
@@ -227,7 +166,7 @@ void RayGen() {
 [shader("anyhit")]
 void AnyHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attributes) {
     let instance = instances[CustomInstanceIndex()];
-    let vertex = interpolate_attributes(attributes.barycentrics, instance);
+    let vertex = InterpolateAttributes(attributes.barycentrics, instance);
 
     if (instance.material.alpha(vertex.uv) < Random(payload.rng)) {
         IgnoreHit();
@@ -237,111 +176,44 @@ void AnyHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes a
 [shader("closesthit")]
 void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attributes) {
     let instance = instances[CustomInstanceIndex()];
-    let vertex = interpolate_attributes(attributes.barycentrics, instance);
 
-    let geoN = normalize(mul((float3x3) ObjectToWorld(), vertex.normal));
+    let vertex = InterpolateAttributes(attributes.barycentrics, instance);
+    let mat = GetMaterialProps(instance.material, vertex.uv);
 
-    payload.hit = true;
+    // Fill in surface interaction
+    SurfaceInteraction si;
+    si.position = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
+    si.view = -WorldRayDirection();
+    si.normal = OrientNormal(normalize(mul((float3x3) ObjectToWorld(), vertex.normal)), si.view);
 
-    // Material
-    let clearcoat = instance.material.clearcoat(vertex.uv);
-    let clearcoat_roughness = instance.material.clearcoat_roughness(vertex.uv);
+    // Calculate new origin
+    payload.new_origin = si.position + si.normal * (1e-4 + RayTCurrent() * 1e-5);
 
-    // View direction
-    let V = -WorldRayDirection();
-    let ffgeoN = dot(geoN, V) < 0.0 ? -geoN : geoN;
+    // Sample material
+    BsdfSample sample;
 
-    // Dielectric Fresnel (IOR 1.5 -> F0 = 0.04)
-    let ccF0 = float3(0.04);
-    let ccFresnel = 0.04 + (1.0 - 0.04) * pow(1.0 - clamp(dot(ffgeoN, V), 0.0, 1.0), 5.0);
-
-    // Probability of hitting the clearcoat is determined by strength and Fresnel
-    let ccProb = clamp(ccFresnel * clearcoat, 0.0, 0.99);
-
-    // New origin
-    payload.new_origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent() + ffgeoN * (1e-4 + RayTCurrent() * 1e-5);
+    let ccProb = GetClearcoatProbability(si, mat);
 
     if (Random(payload.rng) < ccProb) {
         // --- Clear coat ---
+        sample = SampleClearcoatLayer(payload.rng, si, mat);
+        sample.weight /= ccProb;
 
-        // Reuse SampleGGX with clearcoat roughness and F0=0.04
-        let sample = SampleGGX(payload.rng, ffgeoN, V, clearcoat_roughness * clearcoat_roughness, ccF0);
-
-        if (dot(sample.weight, sample.weight) > 0.0) {
-            payload.new_direction = sample.L;
-            // Weight must be normalized by the probability of choosing this path
-            payload.color = sample.weight / ccProb;
-        } else {
-            payload.hit = false;
-            payload.color = float3(0);
-        }
-
-        // Emissive doesn't typically come from the clearcoat layer itself
-        payload.emissive = float3(0);
+        payload.emissive = float3(0.0);
     } else {
         // --- Base layer ---
-        let baseLayerWeight = 1.0 / (1.0 - ccProb);
+        SampleNormalMap(vertex, instance.material, si);
 
-        // Material
-        let albedo = instance.material.albedo(vertex.uv);
-        let roughness = max(instance.material.roughness(vertex.uv), 0.001);
-        let metallic = instance.material.metallic(vertex.uv);
+        sample = SampleBaseLayer(payload.rng, si, mat);
+        sample.weight /= 1.0 - ccProb;
 
-        // Normal mapping
-        var N = geoN;
-
-        if (instance.material.normal_texture > 0) {
-            let N_map = textures[instance.material.normal_texture - 1].SampleLevelZero(vertex.uv).xyz;
-            N = NormalMap(vertex.tangent, N, N_map);
-
-            if (dot(N, geoN) < 0.0) {
-                N = geoN;
-            }
-        }
-
-        let ffN = dot(N, V) < 0.0 ? -N : N;
-
-        // F0: Surface reflection at 0 degrees
-        // Dielectric: 0.04, Metal: albedo
-        let F0 = lerp(float3(0.04), albedo, metallic);
-
-        // Calculate Fresnel at view angle to decide probability of specular reflection
-        let F_view = F0 + (1.0 - F0) * pow(1.0 - clamp(dot(ffN, V), 0.0, 1.0), 5.0);
-        // Approximate luminosity of Fresnel for probability
-        let specProb = dot(F_view, float3(0.299, 0.587, 0.114));
-
-        // Boost specular probability for metals
-        let selectionProb = clamp(lerp(specProb, 1.0, metallic), 0.05, 1.0);
-
-        if (Random(payload.rng) < selectionProb) {
-            // --- Specular Path (GGX) ---
-            let sample = SampleGGX(payload.rng, ffN, V, roughness * roughness, F0);
-
-            if (dot(sample.weight, sample.weight) > 0.0) {
-                payload.new_direction = sample.L;
-                payload.color = (sample.weight / max(selectionProb, 0.001)) * baseLayerWeight;
-            } else {
-                payload.hit = false;
-                payload.color = float3(0);
-            }
-        } else {
-            // --- Diffuse Path (Disney) ---
-            let transmission = 1.0 - F_view;
-            let diffuseAlbedo = albedo * (1.0 - metallic) * transmission;
-
-            payload.new_direction = RandomCosineHemisphere(payload.rng, ffN);
-            let L = payload.new_direction;
-
-            // Evaluate BRDF
-            let brdf = EvalDisneyDiffuse(diffuseAlbedo, roughness, ffN, L, V);
-
-            // Throughput = (BRDF * PI) / (1.0 - Probability)
-            payload.color = ((brdf * float.getPi()) / max(1.0 - selectionProb, 0.001)) * baseLayerWeight;
-        }
-
-        // Emissive
-        payload.emissive = instance.material.emissive(vertex.uv) * baseLayerWeight;
+        payload.emissive = instance.material.emissive(vertex.uv) / (1.0 - ccProb);
     }
+
+    // Fill in payload from sample
+    payload.hit = sample.valid;
+    payload.new_direction = sample.L;
+    payload.color = sample.weight;
 }
 
 [shader("miss")]
@@ -364,7 +236,7 @@ void MissGeneric(inout RayPayload payload) {
     payload.color = GetBackground(dir);
 }
 
-Vertex interpolate_attributes(float2 barycentrics, Instance instance) {
+Vertex InterpolateAttributes(float2 barycentrics, Instance instance) {
     let bary = float3(1.0 - barycentrics.x - barycentrics.y, barycentrics.x, barycentrics.y);
 
     let index_i = PrimitiveIndex() * 3;
@@ -379,4 +251,39 @@ Vertex interpolate_attributes(float2 barycentrics, Instance instance) {
     vertex.tangent = instance.vertices[index_a].tangent * bary.x + instance.vertices[index_b].tangent * bary.y + instance.vertices[index_c].tangent * bary.z;
 
     return vertex;
+}
+
+MaterialProps GetMaterialProps(Material mat, float2 uv) {
+    MaterialProps props;
+
+    props.albedo = mat.albedo_factor.rgb * SampleTexture(mat.albedo_texture, uv).rgb;
+    props.metallic = mat.metallic_factor * SampleTexture(mat.metallic_roughness_texture, uv).b;
+    props.roughness = mat.roughness_factor * SampleTexture(mat.metallic_roughness_texture, uv).g;
+    props.clearcoat = mat.clearcoat_factor * SampleTexture(mat.clearcoat_texture, uv).r;
+    props.clearcoat_roughness = mat.clearcoat_roughness_factor * SampleTexture(mat.clearcoat_roughness_texture, uv).g;
+
+    return props;
+}
+
+float4 SampleTexture(uint texture, float2 uv) {
+    if (texture > 0) {
+        return textures[texture - 1].SampleLevelZero(uv);
+    }
+
+    return float4(1.0);
+}
+
+void SampleNormalMap(Vertex vertex, Material material, inout SurfaceInteraction si) {
+    if (material.normal_texture > 0) {
+        let normal_geo = si.normal;
+
+        let N_map = textures[material.normal_texture - 1].SampleLevelZero(vertex.uv).xyz;
+        si.normal = NormalMap(vertex.tangent, si.normal, N_map);
+
+        if (dot(si.normal, normal_geo) < 0.0) {
+            si.normal = normal_geo;
+        } else {
+            si.normal = OrientNormal(si.normal, si.view);
+        }
+    }
 }

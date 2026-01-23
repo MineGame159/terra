@@ -204,6 +204,14 @@ GGXSample SampleGGX(inout uint state, float3 N, float3 V, float roughness, float
     return GGXSample(float3(0), float3(0));
 }
 
+float3 FresnelSchlick(float3 F0, float cosTheta) {
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+float FresnelDielectric(float cosTheta, float F0_val) {
+    return F0_val + (1.0 - F0_val) * pow(1.0 - cosTheta, 5.0);
+}
+
 float3 GetBackground(float3 direction) {
     var t = 0.5 * (direction.y + 1);
     return (1 - t) * float3(1) + t * float3(0.5, 0.7, 1);
@@ -269,4 +277,8 @@ float3 HueClamp(float3 color, float limit) {
     }
 
     return color;
+}
+
+float3 OrientNormal(float3 normal, float3 view) {
+    return dot(normal, view) < 0.0 ? -normal : normal;
 }
