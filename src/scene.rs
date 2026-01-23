@@ -148,10 +148,10 @@ pub struct Material {
     pub emissive_factor: Vec4,
     pub emissive_texture: TextureId,
 
+    pub ior: f32,
+
     pub specular_factor: f32,
     pub specular_texture: TextureId,
-
-    pub _pad1: u32,
 
     pub specular_color_factor: Vec4,
     pub specular_color_texture: TextureId,
@@ -182,10 +182,10 @@ impl Default for Material {
             emissive_factor: Vec4::ZERO,
             emissive_texture: TextureId::empty(),
 
+            ior: 1.5,
+
             specular_factor: 1.0,
             specular_texture: TextureId::empty(),
-
-            _pad1: 0,
 
             specular_color_factor: Vec4::ONE,
             specular_color_texture: TextureId::empty(),

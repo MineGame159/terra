@@ -10,6 +10,7 @@ struct MaterialProps {
     float3 albedo;
     float metallic;
     float roughness;
+    float ior;
     float specular;
     float3 specular_color;
     float clearcoat;
@@ -91,7 +92,7 @@ BsdfSample SampleBaseLayer(inout uint rng, SurfaceInteraction si, MaterialProps 
     let NdotV = clamp(dot(si.normal, si.view), 0.0, 1.0);
 
     // 2. Base F0
-    let dielectricF0 = 0.04 * mat.specular * mat.specular_color;
+    let dielectricF0 = pow((mat.ior - 1) / (mat.ior + 1), 2) * mat.specular * mat.specular_color;
     props.F0 = lerp(dielectricF0, mat.albedo, mat.metallic);
 
     // 3. Fresnel at view angle

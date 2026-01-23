@@ -219,6 +219,10 @@ impl ModelLoader<'_, '_> {
             ..Default::default()
         };
 
+        if let Some(ior) = mat.ior() {
+            material.ior = ior;
+        }
+
         if let Some(spec) = mat.specular() {
             material.specular_factor = spec.specular_factor();
             material.specular_texture = self.get_texture_id(
