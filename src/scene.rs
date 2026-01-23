@@ -10,7 +10,7 @@ use vulkano::{
         AccelerationStructureGeometryTrianglesData, AccelerationStructureInstance, GeometryFlags,
     },
     buffer::{BufferContents, BufferUsage, IndexBuffer, Subbuffer},
-    format::Format,
+    format::{Format, FormatFeatures},
     image::{
         ImageUsage,
         sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode},
@@ -233,36 +233,102 @@ impl<'a> SceneBuilder<'a> {
         );
 
         let (format, pixels) = match format.components() {
-            [8, 8, 8, 0] => (
-                format_3_to_4(format),
-                Cow::Owned(
-                    pixels
-                        .iter()
-                        .array_chunks::<3>()
-                        .flat_map(|[r, g, b]| [*r, *g, *b, 0xFF])
-                        .collect(),
-                ),
-            ),
-            [16, 16, 16, 0] => (
-                format_3_to_4(format),
-                Cow::Owned(bytemuck::cast_vec(
-                    bytemuck::cast_slice::<u8, u16>(pixels)
-                        .iter()
-                        .array_chunks::<3>()
-                        .flat_map(|[r, g, b]| [*r, *g, *b, 0xFFFF])
-                        .collect::<Vec<u16>>(),
-                )),
-            ),
-            [32, 32, 32, 0] => (
-                format_3_to_4(format),
-                Cow::Owned(bytemuck::cast_vec(
-                    bytemuck::cast_slice::<u8, f32>(pixels)
-                        .iter()
-                        .array_chunks::<3>()
-                        .flat_map(|[r, g, b]| [*r, *g, *b, 1.0])
-                        .collect::<Vec<f32>>(),
-                )),
-            ),
+            [8, 8, 0, 0]
+                if !self
+                    .gpu
+                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+            {
+                (
+                    format_2_to_4(format),
+                    Cow::Owned(
+                        pixels
+                            .iter()
+                            .array_chunks::<2>()
+                            .flat_map(|[r, g]| [*r, *g, *r, *g])
+                            .collect(),
+                    ),
+                )
+            }
+            [8, 8, 8, 0]
+                if !self
+                    .gpu
+                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+            {
+                (
+                    format_3_to_4(format),
+                    Cow::Owned(
+                        pixels
+                            .iter()
+                            .array_chunks::<3>()
+                            .flat_map(|[r, g, b]| [*r, *g, *b, 0xFF])
+                            .collect(),
+                    ),
+                )
+            }
+            [16, 16, 0, 0]
+                if !self
+                    .gpu
+                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+            {
+                (
+                    format_2_to_4(format),
+                    Cow::Owned(bytemuck::cast_vec(
+                        bytemuck::cast_slice::<u8, u16>(pixels)
+                            .iter()
+                            .array_chunks::<2>()
+                            .flat_map(|[r, g]| [*r, *g, *r, *g])
+                            .collect::<Vec<u16>>(),
+                    )),
+                )
+            }
+            [16, 16, 16, 0]
+                if !self
+                    .gpu
+                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+            {
+                (
+                    format_3_to_4(format),
+                    Cow::Owned(bytemuck::cast_vec(
+                        bytemuck::cast_slice::<u8, u16>(pixels)
+                            .iter()
+                            .array_chunks::<3>()
+                            .flat_map(|[r, g, b]| [*r, *g, *b, 0xFFFF])
+                            .collect::<Vec<u16>>(),
+                    )),
+                )
+            }
+            [32, 32, 0, 0]
+                if !self
+                    .gpu
+                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+            {
+                (
+                    format_2_to_4(format),
+                    Cow::Owned(bytemuck::cast_vec(
+                        bytemuck::cast_slice::<u8, f32>(pixels)
+                            .iter()
+                            .array_chunks::<2>()
+                            .flat_map(|[r, g]| [*r, *g, *r, *g])
+                            .collect::<Vec<f32>>(),
+                    )),
+                )
+            }
+            [32, 32, 32, 0]
+                if !self
+                    .gpu
+                    .does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+            {
+                (
+                    format_3_to_4(format),
+                    Cow::Owned(bytemuck::cast_vec(
+                        bytemuck::cast_slice::<u8, f32>(pixels)
+                            .iter()
+                            .array_chunks::<3>()
+                            .flat_map(|[r, g, b]| [*r, *g, *b, 1.0])
+                            .collect::<Vec<f32>>(),
+                    )),
+                )
+            }
             _ => (format, Cow::Borrowed(pixels)),
         };
 
@@ -479,6 +545,16 @@ impl<'a> SceneBuilder<'a> {
             materials,
             textures: self.textures.clone(),
         }
+    }
+}
+
+fn format_2_to_4(format: Format) -> Format {
+    match format {
+        Format::R8G8_UNORM => Format::R8G8B8A8_UNORM,
+        Format::R8G8_SRGB => Format::R8G8B8A8_SRGB,
+        Format::R16G16_UNORM => Format::R16G16B16A16_UNORM,
+        Format::R32G32_SFLOAT => Format::R32G32B32A32_SFLOAT,
+        _ => unimplemented!(),
     }
 }
 

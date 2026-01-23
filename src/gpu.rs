@@ -33,7 +33,7 @@ use vulkano::{
         QueueFlags,
         physical::{PhysicalDevice, PhysicalDeviceType},
     },
-    format::Format,
+    format::{Format, FormatFeatures, FormatProperties},
     image::{
         Image, ImageCreateInfo, ImageLayout, ImageUsage,
         sampler::{ComponentMapping, ComponentSwizzle},
@@ -436,6 +436,13 @@ impl Gpu {
         let duration = Instant::now() - start;
 
         (result, duration)
+    }
+
+    pub fn does_format_support(&self, format: Format, features: FormatFeatures) -> bool {
+        match self.physical_device.format_properties(format) {
+            Ok(props) => props.optimal_tiling_features.contains(features),
+            Err(_) => false,
+        }
     }
 }
 
