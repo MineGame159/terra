@@ -1,6 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
-use glam::{Mat4, UVec2, Vec2, Vec3, Vec4, vec4};
+use glam::{Mat4, UVec2, Vec3, Vec4, vec4};
 use vulkano::{
     DeviceAddress, Packed24_8,
     acceleration_structure::{
@@ -9,7 +9,7 @@ use vulkano::{
         AccelerationStructureGeometryTrianglesData, AccelerationStructureInstance, GeometryFlags,
     },
     buffer::{BufferContents, BufferUsage, IndexBuffer, Subbuffer},
-    format::{Format, NumericFormat},
+    format::Format,
     image::{
         ImageUsage,
         sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode},
@@ -45,7 +45,7 @@ pub struct BuiltInstance {
     pub vertices: DeviceAddress,
     pub indices: DeviceAddress,
 
-    pub material: Material,
+    pub material: DeviceAddress,
 }
 
 pub struct Scene {
@@ -54,6 +54,7 @@ pub struct Scene {
 
     pub meshes: Vec<BuiltMesh>,
     pub instance_buffer: Subbuffer<[BuiltInstance]>,
+    pub materials: Subbuffer<[Material]>,
     pub textures: Vec<(Arc<ImageView>, Arc<Sampler>)>,
 }
 
@@ -151,7 +152,7 @@ struct Mesh {
 struct Instance {
     mesh_id: MeshId,
     transform: Mat4,
-    material: Material,
+    material: usize,
 }
 
 pub struct SceneBuilder<'a> {
@@ -159,6 +160,7 @@ pub struct SceneBuilder<'a> {
 
     meshes: Vec<Mesh>,
     instances: Vec<Instance>,
+    materials: Vec<Material>,
 
     images: Vec<Arc<ImageView>>,
     textures: Vec<(Arc<ImageView>, Arc<Sampler>)>,
@@ -171,6 +173,7 @@ impl<'a> SceneBuilder<'a> {
 
             meshes: Vec::with_capacity(8),
             instances: Vec::with_capacity(8),
+            materials: Vec::with_capacity(8),
 
             images: Vec::with_capacity(8),
             textures: Vec::with_capacity(8),
@@ -275,14 +278,29 @@ impl<'a> SceneBuilder<'a> {
         assert_eq!(transform.row(3), vec4(0.0, 0.0, 0.0, 1.0));
         assert!(mesh_id.valid());
 
+        let material_index = self
+            .materials
+            .iter()
+            .position(move |a| *a == material)
+            .unwrap_or_else(|| {
+                self.materials.push(material);
+                self.materials.len() - 1
+            });
+
         self.instances.push(Instance {
             mesh_id,
             transform,
-            material,
+            material: material_index,
         });
     }
 
     pub fn build(&self) -> Scene {
+        // Create material buffer
+
+        let materials = self
+            .gpu
+            .create_filled_buffer(BufferUsage::SHADER_DEVICE_ADDRESS, &self.materials);
+
         // Create mesh (bottom level) acceleration structures
 
         let mut mesh_accel_structs = Vec::with_capacity(self.meshes.len());
@@ -348,7 +366,12 @@ impl<'a> SceneBuilder<'a> {
                     BuiltInstance {
                         vertices: mesh.vertex_buffer.device_address().unwrap().into(),
                         indices: mesh.index_buffer.device_address().unwrap().into(),
-                        material: instance.material,
+                        material: materials
+                            .clone()
+                            .index(instance.material as u64)
+                            .device_address()
+                            .unwrap()
+                            .into(),
                     }
                 })
                 .collect::<Vec<BuiltInstance>>(),
@@ -371,7 +394,11 @@ impl<'a> SceneBuilder<'a> {
                     ],
                     instance_custom_index_and_mask: Packed24_8::new(i as u32, 0xFF),
                     instance_shader_binding_table_record_offset_and_flags: Packed24_8::new(
-                        if instance.material.opaque == 1 { 0 } else { 1 },
+                        if self.materials[instance.material].opaque == 1 {
+                            0
+                        } else {
+                            1
+                        },
                         0,
                     ),
                     acceleration_structure_reference: mesh_accel_structs[instance.mesh_id.index()]
@@ -403,6 +430,7 @@ impl<'a> SceneBuilder<'a> {
 
             meshes,
             instance_buffer: built_instance_buffer,
+            materials,
             textures: self.textures.clone(),
         }
     }

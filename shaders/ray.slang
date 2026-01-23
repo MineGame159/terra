@@ -70,7 +70,7 @@ struct Instance {
     Vertex* vertices;
     uint* indices;
 
-    Material material;
+    Material* material;
 }
 
 [vk_binding(0, 0)]
@@ -253,7 +253,7 @@ Vertex InterpolateAttributes(float2 barycentrics, Instance instance) {
     return vertex;
 }
 
-MaterialProps GetMaterialProps(Material mat, float2 uv) {
+MaterialProps GetMaterialProps(Material* mat, float2 uv) {
     MaterialProps props;
 
     props.albedo = mat.albedo_factor.rgb * SampleTexture(mat.albedo_texture, uv).rgb;
@@ -273,7 +273,7 @@ float4 SampleTexture(uint texture, float2 uv) {
     return float4(1.0);
 }
 
-void SampleNormalMap(Vertex vertex, Material material, inout SurfaceInteraction si) {
+void SampleNormalMap(Vertex vertex, Material* material, inout SurfaceInteraction si) {
     if (material.normal_texture > 0) {
         let normal_geo = si.normal;
 
