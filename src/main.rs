@@ -380,7 +380,7 @@ fn main() {
         .read()
         .unwrap()
         .iter()
-        .map(map_color::<color::ReinhardJodie>)
+        .map(map_color::<color::AgX>)
         .collect();
 
     // Write pixels to image
