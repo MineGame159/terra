@@ -245,44 +245,44 @@ fn main() {
         ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST,
     );
 
-    let set = DescriptorSet::new(
-        gpu.set_allocator.clone(),
-        set_layout.clone(),
-        [
-            WriteDescriptorSet::acceleration_structure(0, scene.accel_struct.clone()),
-            WriteDescriptorSet::buffer(1, scene.instance_buffer.clone()),
-            WriteDescriptorSet::image_view_with_layout_sampler_array(
-                2,
-                0,
-                scene.textures.iter().map(move |(view, sampler)| {
-                    (
-                        DescriptorImageViewInfo {
-                            image_view: view.clone(),
-                            image_layout: ImageLayout::ShaderReadOnlyOptimal,
-                        },
-                        sampler.clone(),
-                    )
-                }),
-            ),
-            WriteDescriptorSet::image_view_with_layout_sampler(
-                3,
-                DescriptorImageViewInfo {
-                    image_view: env_image_view.clone(),
-                    image_layout: ImageLayout::ShaderReadOnlyOptimal,
-                },
-                env_sampler.clone(),
-            ),
-            WriteDescriptorSet::image_view_with_layout(
-                4,
-                DescriptorImageViewInfo {
-                    image_view: image_view.clone(),
-                    image_layout: ImageLayout::General,
-                },
-            ),
-        ],
-        [],
-    )
-    .unwrap();
+    let mut writes = vec![
+        WriteDescriptorSet::acceleration_structure(0, scene.accel_struct.clone()),
+        WriteDescriptorSet::buffer(1, scene.instance_buffer.clone()),
+        WriteDescriptorSet::image_view_with_layout_sampler(
+            3,
+            DescriptorImageViewInfo {
+                image_view: env_image_view.clone(),
+                image_layout: ImageLayout::ShaderReadOnlyOptimal,
+            },
+            env_sampler.clone(),
+        ),
+        WriteDescriptorSet::image_view_with_layout(
+            4,
+            DescriptorImageViewInfo {
+                image_view: image_view.clone(),
+                image_layout: ImageLayout::General,
+            },
+        ),
+    ];
+
+    if !scene.textures.is_empty() {
+        writes.push(WriteDescriptorSet::image_view_with_layout_sampler_array(
+            2,
+            0,
+            scene.textures.iter().map(move |(view, sampler)| {
+                (
+                    DescriptorImageViewInfo {
+                        image_view: view.clone(),
+                        image_layout: ImageLayout::ShaderReadOnlyOptimal,
+                    },
+                    sampler.clone(),
+                )
+            }),
+        ));
+    }
+
+    let set =
+        DescriptorSet::new(gpu.set_allocator.clone(), set_layout.clone(), writes, []).unwrap();
 
     // Render
 
