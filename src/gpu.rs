@@ -36,6 +36,7 @@ use vulkano::{
     format::Format,
     image::{
         Image, ImageCreateInfo, ImageLayout, ImageUsage,
+        sampler::{ComponentMapping, ComponentSwizzle},
         view::{ImageView, ImageViewCreateInfo},
     },
     instance::{Instance, InstanceCreateInfo},
@@ -202,8 +203,29 @@ impl Gpu {
         )
         .unwrap();
 
-        let image_view =
-            ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image)).unwrap();
+        let image_view = ImageView::new(
+            image.clone(),
+            ImageViewCreateInfo {
+                component_mapping: match format.components().map(move |bits| bits.min(1)) {
+                    [1, 0, 0, 0] => ComponentMapping {
+                        r: ComponentSwizzle::Red,
+                        g: ComponentSwizzle::Red,
+                        b: ComponentSwizzle::Red,
+                        a: ComponentSwizzle::Red,
+                    },
+                    [1, 1, 0, 0] => ComponentMapping {
+                        r: ComponentSwizzle::Red,
+                        g: ComponentSwizzle::Green,
+                        b: ComponentSwizzle::Red,
+                        a: ComponentSwizzle::Green,
+                    },
+                    [1, 1, 1, 1] => ComponentMapping::identity(),
+                    _ => unimplemented!(),
+                },
+                ..ImageViewCreateInfo::from_image(&image)
+            },
+        )
+        .unwrap();
 
         (image, image_view)
     }
