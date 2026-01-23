@@ -45,6 +45,14 @@ struct Material {
     float4 emissive_factor;
     uint emissive_texture;
 
+    float specular_factor;
+    uint specular_texture;
+
+    uint _pad1;
+
+    float4 specular_color_factor;
+    uint specular_color_texture;
+
     float clearcoat_factor;
     uint clearcoat_texture;
 
@@ -55,7 +63,7 @@ struct Material {
 
     uint opaque;
 
-    uint _pad;
+    uint _pad2;
 
     float3 emissive(float2 uv) {
         return emissive_factor.rgb * SampleTexture(emissive_texture, uv).rgb;
@@ -261,6 +269,8 @@ MaterialProps GetMaterialProps(Material* mat, float2 uv) {
     props.albedo = mat.albedo_factor.rgb * SampleTexture(mat.albedo_texture, uv).rgb;
     props.metallic = mat.metallic_factor * SampleTexture(mat.metallic_roughness_texture, uv).b;
     props.roughness = mat.roughness_factor * SampleTexture(mat.metallic_roughness_texture, uv).g;
+    props.specular = mat.specular_factor * SampleTexture(mat.specular_texture, uv).a;
+    props.specular_color = mat.specular_color_factor.rgb * SampleTexture(mat.specular_color_texture, uv).rgb;
     props.clearcoat = mat.clearcoat_factor * SampleTexture(mat.clearcoat_texture, uv).r;
     props.clearcoat_roughness = mat.clearcoat_roughness_factor * SampleTexture(mat.clearcoat_roughness_texture, uv).g;
 

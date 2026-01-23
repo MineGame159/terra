@@ -219,6 +219,22 @@ impl ModelLoader<'_, '_> {
             ..Default::default()
         };
 
+        if let Some(spec) = mat.specular() {
+            material.specular_factor = spec.specular_factor();
+            material.specular_texture = self.get_texture_id(
+                spec.specular_texture().map(move |info| info.texture()),
+                false,
+            );
+
+            material.specular_color_factor =
+                Vec3::from_array(spec.specular_color_factor()).extend(0.0);
+            material.specular_color_texture = self.get_texture_id(
+                spec.specular_color_texture()
+                    .map(move |info| info.texture()),
+                true,
+            );
+        }
+
         if let Some(cc) = mat.clearcoat() {
             material.clearcoat_factor = cc.clearcoat_factor();
             material.clearcoat_texture = self.get_texture_id(

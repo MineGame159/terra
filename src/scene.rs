@@ -148,6 +148,14 @@ pub struct Material {
     pub emissive_factor: Vec4,
     pub emissive_texture: TextureId,
 
+    pub specular_factor: f32,
+    pub specular_texture: TextureId,
+
+    pub _pad1: u32,
+
+    pub specular_color_factor: Vec4,
+    pub specular_color_texture: TextureId,
+
     pub clearcoat_factor: f32,
     pub clearcoat_texture: TextureId,
 
@@ -158,7 +166,7 @@ pub struct Material {
 
     pub opaque: u32,
 
-    pub _pad: u32,
+    pub _pad2: u32,
 }
 
 impl Default for Material {
@@ -174,6 +182,14 @@ impl Default for Material {
             emissive_factor: Vec4::ZERO,
             emissive_texture: TextureId::empty(),
 
+            specular_factor: 1.0,
+            specular_texture: TextureId::empty(),
+
+            _pad1: 0,
+
+            specular_color_factor: Vec4::ONE,
+            specular_color_texture: TextureId::empty(),
+
             clearcoat_factor: 0.0,
             clearcoat_texture: TextureId::empty(),
 
@@ -184,7 +200,7 @@ impl Default for Material {
 
             opaque: 0,
 
-            _pad: 0,
+            _pad2: 0,
         }
     }
 }
