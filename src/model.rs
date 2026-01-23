@@ -219,6 +219,10 @@ impl ModelLoader<'_, '_> {
             ..Default::default()
         };
 
+        if let Some(strength) = mat.emissive_strength() {
+            material.emissive_factor *= strength;
+        }
+
         if let Some(ior) = mat.ior() {
             material.ior = ior;
         }
