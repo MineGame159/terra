@@ -133,45 +133,78 @@ float V_SmithGGXCorrelated(float dotNL, float dotNV, float alpha) {
     return 0.5 / (lambdaV + lambdaL);
 }
 
-BsdfEval SampleMicrofacet(inout uint state, float3 N, float3 V, float alpha) {
-    let alpha2 = alpha * alpha;
-
-    // 1. Sample H (VNDF or standard - using standard GGX sampling here for simplicity)
-    let u1 = Random(state);
-    let u2 = Random(state);
-
-    let phi = 2.0 * float.getPi() * u1;
-    let cosTheta = sqrt((1.0 - u2) / (1.0 + (alpha2 - 1.0) * u2));
-    let sinTheta = sqrt(1.0 - cosTheta * cosTheta);
-
-    let localH = float3(
-        sinTheta * cos(phi),
-        sinTheta * sin(phi),
-        cosTheta
-    );
-
-    // Build Basis
+// Heitz 2018 "A Simpler and Exact Sampling Routine for the GGX Distribution of Visible Normals"
+BsdfEval SampleMicrofacetVNDF(inout uint state, float3 N, float3 V, float alpha) {
+    // 1. Build Basis (Same as your existing code)
     let sign = (N.z >= 0.0) ? 1.0 : -1.0;
     let a = -1.0 / (sign + N.z);
     let b = N.x * N.y * a;
     let T = float3(1.0 + sign * N.x * N.x * a, sign * b, -sign * N.x);
     let B = float3(b, sign + N.y * N.y * a, -N.y);
 
-    let H = normalize(localH.x * T + localH.y * B + localH.z * N);
+    // 2. Transform View to Local Tangent Space
+    // We strictly assume isotropic roughness here (alpha_x = alpha_y = alpha)
+    let V_local = float3(dot(T, V), dot(B, V), dot(N, V));
 
-    // 2. Reflect to get L
-    let dotVH = dot(V, H);
+    // 3. Stretch the view vector (Section 3.1)
+    // For isotropic, we scale X and Y by alpha.
+    let Vh = normalize(float3(alpha * V_local.x, alpha * V_local.y, V_local.z));
+
+    // 4. Build orthonormal basis (T1, T2) in the stretched space (Section 3.2)
+    // If z is close to 1, we can't use the standard cross product trick easily,
+    // but here is a compact construction:
+    let lensq = Vh.x * Vh.x + Vh.y * Vh.y;
+    float3 T1 = (lensq > 0.0) ? float3(-Vh.y, Vh.x, 0.0) * rsqrt(lensq) : float3(1.0, 0.0, 0.0);
+    let T2 = cross(Vh, T1);
+
+    // 5. Sample the projected disk (Section 3.3)
+    let u1 = Random(state);
+    let u2 = Random(state);
+    let r = sqrt(u1);
+    let phi = 2.0 * float.getPi() * u2;
+
+    let t1 = r * cos(phi);
+    let t2 = r * sin(phi);
+    let s = 0.5 * (1.0 + Vh.z);
+    let t2_lerp = (1.0 - s) * sqrt(1.0 - t1 * t1) + s * t2;
+
+    // 6. Reproject to hemisphere and unstretch (Section 3.4)
+    let Nh = t1 * T1 + t2_lerp * T2 + sqrt(max(0.0, 1.0 - t1 * t1 - t2_lerp * t2_lerp)) * Vh;
+
+    // Unstretch back to non-slope space
+    let Ne = normalize(float3(alpha * Nh.x, alpha * Nh.y, max(0.0, Nh.z)));
+
+    // 7. Transform H back to World Space
+    let H = normalize(Ne.x * T + Ne.y * B + Ne.z * N);
+
+    // 8. Reflect to get L
+    let dotVH = clamp(dot(V, H), 0.0, 1.0);
     let L = normalize(2.0 * dotVH * H - V);
 
-    // 3. Compute PDF
-    // PDF = (D * dotNH) / (4 * dotVH)
-    let dotNH = max(dot(N, H), 0.0);
+    // 9. Calculate VNDF PDF
+    // PDF_vndf = G1(V) * D * max(0, V.H) / (N.V)
+    // Jacobian to convert to Light direction: / (4 * V.H)
+
+    let dotNL = clamp(dot(N, L), 0.0, 1.0);
+    let dotNV = clamp(dot(N, V), 0.0, 1.0);
+    let dotNH = clamp(dot(N, H), 0.0, 1.0);
+
     let D = D_GGX(dotNH, alpha);
 
-    // Safety check for denominators
-    let pdf = (dotVH > 0.0) ? (D * dotNH) / (4.0 * dotVH) : 0.0;
+    // G1(V) for Smith-GGX
+    // Note: G_Smith(L,V) = G1(L) * G1(V) roughly.
+    // G1(V) = 2 * (N.V) / ((N.V) + sqrt(alpha^2 + (1-alpha^2)(N.V)^2))
+    let alpha2 = alpha * alpha;
+    let lambdaV = sqrt(alpha2 + (1.0 - alpha2) * dotNV * dotNV);
+    let G1_V = 2.0 * dotNV / (dotNV + lambdaV);
 
-    // We treat the sample value in the struct as the direction here
+    // PDF in Half-Vector space
+    // pdf_h = (G1_V * dotVH * D) / dotNV;
+
+    // Convert to Light Vector space (pdf_l = pdf_h / (4 * dotVH))
+    // The dotVH terms cancel out beautifully!
+    let pdf = (G1_V * D) / (4.0 * dotNV);
+
     return BsdfEval(L, pdf);
 }
 

@@ -44,7 +44,7 @@ BsdfSample SampleClearcoatLayer(inout uint rng, SurfaceInteraction si, MaterialP
     let alpha = max(0.001, mat.clearcoat_roughness * mat.clearcoat_roughness);
 
     // 1. Sample Direction & PDF
-    let sample = SampleMicrofacet(rng, si.normal, si.view, alpha);
+    let sample = SampleMicrofacetVNDF(rng, si.normal, si.view, alpha);
     result.L = sample.value; // In SampleMicrofacet, value is L
 
     let pdf = sample.pdf;
@@ -69,7 +69,7 @@ BsdfSample SampleBaseSpecular(inout uint rng, SurfaceInteraction si, MaterialPro
     let alpha = max(0.001, mat.roughness * mat.roughness);
 
     // 1. Sample Direction & PDF
-    let sample = SampleMicrofacet(rng, si.normal, si.view, alpha);
+    let sample = SampleMicrofacetVNDF(rng, si.normal, si.view, alpha);
     result.L = sample.value;
 
     let pdf = sample.pdf;
