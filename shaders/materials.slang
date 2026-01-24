@@ -1,4 +1,5 @@
 import "utils";
+import "lobes";
 
 struct SurfaceInteraction {
     float3 position;
@@ -39,15 +40,25 @@ float GetClearcoatProbability(SurfaceInteraction si, MaterialProps mat) {
 BsdfSample SampleClearcoatLayer(inout uint rng, SurfaceInteraction si, MaterialProps mat) {
     BsdfSample result;
 
-    // Dielectric F0 for clearcoat is usually 0.04
-    let ccF0 = float3(0.04);
+    let F0 = float3(0.04);
+    let alpha = max(0.001, mat.clearcoat_roughness * mat.clearcoat_roughness);
 
-    // Use Geometric normal for clearcoat (it sits on top of normal map)
-    let sample = SampleGGX(rng, si.normal, si.view, mat.clearcoat_roughness * mat.clearcoat_roughness, ccF0);
+    // 1. Sample Direction & PDF
+    let sample = SampleMicrofacet(rng, si.normal, si.view, alpha);
+    result.L = sample.value; // In SampleMicrofacet, value is L
 
-    result.L = sample.L;
-    result.weight = sample.weight;
-    result.valid = dot(sample.weight, sample.weight) > 0.0;
+    let pdf = sample.pdf;
+    if (pdf <= 0.0 || dot(si.normal, result.L) <= 0.0) {
+        return BsdfSample(float3(0), float3(0), false);
+    }
+
+    // 2. Evaluate BRDF
+    let brdf = EvalMicrofacet(si.normal, si.view, result.L, alpha, F0);
+
+    // 3. Compute Weight: (BRDF * dotNL) / PDF
+    let dotNL = clamp(dot(si.normal, result.L), 0.0, 1.0);
+    result.weight = brdf * dotNL / sample.pdf;
+    result.valid = true;
 
     return result;
 }
@@ -55,11 +66,27 @@ BsdfSample SampleClearcoatLayer(inout uint rng, SurfaceInteraction si, MaterialP
 BsdfSample SampleBaseSpecular(inout uint rng, SurfaceInteraction si, MaterialProps mat, BaseLayerProps props) {
     BsdfSample result;
 
-    let sample = SampleGGX(rng, si.normal, si.view, mat.roughness * mat.roughness, props.F0);
+    let alpha = max(0.001, mat.roughness * mat.roughness);
 
-    result.L = sample.L;
-    result.weight = sample.weight / max(props.specProb, 0.001);
-    result.valid = dot(sample.weight, sample.weight) > 0.0;
+    // 1. Sample Direction & PDF
+    let sample = SampleMicrofacet(rng, si.normal, si.view, alpha);
+    result.L = sample.value;
+
+    let pdf = sample.pdf;
+    if (pdf <= 0.0 || dot(si.normal, result.L) <= 0.0) {
+        return BsdfSample(float3(0), float3(0), false);
+    }
+
+    // 2. Evaluate BRDF
+    let brdf = EvalMicrofacet(si.normal, si.view, result.L, alpha, props.F0);
+
+    // 3. Compute Weight
+    let dotNL = clamp(dot(si.normal, result.L), 0.0, 1.0);
+    let lobeWeight = brdf * dotNL / sample.pdf;
+
+    // 4. Apply selection probability (Monte Carlo)
+    result.weight = lobeWeight / max(props.specProb, 0.001);
+    result.valid = true;
 
     return result;
 }
@@ -67,20 +94,30 @@ BsdfSample SampleBaseSpecular(inout uint rng, SurfaceInteraction si, MaterialPro
 BsdfSample SampleBaseDiffuse(inout uint rng, SurfaceInteraction si, MaterialProps mat, BaseLayerProps props) {
     BsdfSample result;
 
-    // Energy Conservation: Diffuse is what is left after Specular reflection
+    // 1. Calculate Diffuse Color
     let transmission = 1.0 - props.F_view;
     let diffuseAlbedo = mat.albedo * (1.0 - mat.metallic) * transmission;
 
-    // Generate Direction (Cosine Weighted)
-    result.L = RandomCosineHemisphere(rng, si.normal);
+    // 2. Sample Direction & PDF
+    let sample = SampleCosineHemisphere(rng, si.normal);
+    result.L = sample.value; // In SampleCosine, value is L
 
-    // Evaluate BRDF
-    // Note: If you want to switch to Lambert, replace EvalDisneyDiffuse with (diffuseAlbedo / PI)
+    let pdf = sample.pdf;
+    if (pdf <= 0.0) {
+        return BsdfSample(float3(0), float3(0), false);
+    }
+
+    // 3. Evaluate BRDF
+    // Use EvalDisneyDiffuse if you want the sheen/retro-reflection, or Lambert for simpler look
     let brdf = EvalDisneyDiffuse(diffuseAlbedo, mat.roughness, si.normal, result.L, si.view);
+    // let brdf = EvalLambertian(diffuseAlbedo);
 
-    // Standard Cosine Sample Weight: (BRDF * PI)
-    // We also divide by (1.0 - specProb) because we only trace this path (1-specProb) of the time.
-    result.weight = (brdf * float.getPi()) / max(1.0 - props.specProb, 0.001);
+    // 4. Compute Weight
+    let dotNL = clamp(dot(si.normal, result.L), 0.0, 1.0);
+    let lobeWeight = brdf * dotNL / sample.pdf;
+
+    // 5. Apply selection probability
+    result.weight = lobeWeight / max(1.0 - props.specProb, 0.001);
     result.valid = true;
 
     return result;
@@ -91,21 +128,18 @@ BsdfSample SampleBaseLayer(inout uint rng, SurfaceInteraction si, MaterialProps 
 
     let NdotV = clamp(dot(si.normal, si.view), 0.0, 1.0);
 
-    // 2. Base F0
+    // Dielectric F0
     let dielectricF0 = pow((mat.ior - 1) / (mat.ior + 1), 2) * mat.specular * mat.specular_color;
     props.F0 = lerp(dielectricF0, mat.albedo, mat.metallic);
 
-    // 3. Fresnel at view angle
+    // View Fresnel
     props.F_view = FresnelSchlick(props.F0, NdotV);
 
-    // 4. Calculate Selection Probability (Specular vs Diffuse)
-    // Approx luminance of the Fresnel return
+    // Selection Probability (Luminance of Fresnel)
     let specLuma = dot(props.F_view, float3(0.299, 0.587, 0.114));
-
-    // Metals (metallic=1) are 100% specular.
-    // Dielectrics mix based on Fresnel strength.
     props.specProb = clamp(lerp(specLuma, 1.0, mat.metallic), 0.05, 1.0);
 
+    // Select Lobe
     if (Random(rng) < props.specProb) {
         return SampleBaseSpecular(rng, si, mat, props);
     } else {
