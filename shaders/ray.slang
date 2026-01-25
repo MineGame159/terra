@@ -17,6 +17,7 @@ struct PushConstants {
     uint2 size;
     uint bounces;
     uint sample;
+    uint missIndex;
     float envIntensity;
     float envRotation;
 }
@@ -25,11 +26,11 @@ struct PushConstants {
 ConstantBuffer<PushConstants> pc;
 
 struct Vertex {
-    float3 normal;
-    float _pad0;
-
     float2 uv;
-    float2 _pad1;
+    float2 _pad0;
+
+    float3 normal;
+    float _pad1;
 
     float4 tangent;
 }
@@ -61,8 +62,7 @@ struct Material {
 
     uint normal_texture;
 
-    uint opaque;
-
+    uint _pad1;
     uint _pad2;
 
     float3 emissive(float2 uv) {
@@ -75,8 +75,8 @@ struct Material {
 }
 
 struct Instance {
-    Vertex* vertices;
     uint* indices;
+    Vertex* vertices;
 
     Material* material;
 }
@@ -90,10 +90,10 @@ StructuredBuffer<Instance> instances;
 [vk_binding(2, 0)]
 ConstantBuffer<Sampler2D<float4>[]> textures;
 
-[vk_binding(3, 0)]
+[vk_binding(0, 1)]
 Sampler2D<float3> environmentMap;
 
-[vk_binding(4, 0), format("rgba32f")]
+[vk_binding(0, 2), format("rgba32f")]
 RWTexture2D image;
 
 struct RayPayload {
@@ -135,7 +135,7 @@ void RayGen() {
     for (uint i = 0; i < pc.bounces; i++) {
         // Trace
         payload.depth = i;
-        TraceRay(accelStruct, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+        TraceRay(accelStruct, RAY_FLAG_NONE, 0xFF, 0, 0, pc.missIndex, ray, payload);
 
         // Miss
         if (!payload.hit) {
@@ -256,8 +256,8 @@ Vertex InterpolateAttributes(float2 barycentrics, Instance instance) {
 
     Vertex vertex;
 
-    vertex.normal = instance.vertices[index_a].normal * bary.x + instance.vertices[index_b].normal * bary.y + instance.vertices[index_c].normal * bary.z;
     vertex.uv = instance.vertices[index_a].uv * bary.x + instance.vertices[index_b].uv * bary.y + instance.vertices[index_c].uv * bary.z;
+    vertex.normal = instance.vertices[index_a].normal * bary.x + instance.vertices[index_b].normal * bary.y + instance.vertices[index_c].normal * bary.z;
     vertex.tangent = instance.vertices[index_a].tangent * bary.x + instance.vertices[index_b].tangent * bary.y + instance.vertices[index_c].tangent * bary.z;
 
     return vertex;

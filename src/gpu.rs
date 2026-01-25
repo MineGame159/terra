@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     collections::BTreeMap,
     sync::Arc,
@@ -22,6 +23,7 @@ use vulkano::{
         PrimaryAutoCommandBuffer, allocator::StandardCommandBufferAllocator,
     },
     descriptor_set::{
+        DescriptorBindingResources,
         allocator::StandardDescriptorSetAllocator,
         layout::{
             DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding,
@@ -33,7 +35,7 @@ use vulkano::{
         QueueFlags,
         physical::{PhysicalDevice, PhysicalDeviceType},
     },
-    format::{Format, FormatFeatures, FormatProperties},
+    format::{Format, FormatFeatures},
     image::{
         Image, ImageCreateInfo, ImageLayout, ImageUsage,
         sampler::{ComponentMapping, ComponentSwizzle},
@@ -257,6 +259,113 @@ impl Gpu {
         (image, view)
     }
 
+    pub fn create_sampled_filled_image(
+        &self,
+        size: UVec2,
+        format: Format,
+        pixels: &[u8],
+    ) -> Arc<ImageView> {
+        assert_eq!(
+            size.as_usizevec2().element_product() * format.block_size() as usize,
+            pixels.len()
+        );
+
+        let (format, pixels) = {
+            profiling::scope!("convert format");
+
+            match format.components() {
+                [8, 8, 0, 0]
+                    if !self.does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_2_to_4(format),
+                        Cow::Owned(
+                            pixels
+                                .iter()
+                                .array_chunks::<2>()
+                                .flat_map(|[r, g]| [*r, *g, *r, *g])
+                                .collect(),
+                        ),
+                    )
+                }
+                [8, 8, 8, 0]
+                    if !self.does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_3_to_4(format),
+                        Cow::Owned(
+                            pixels
+                                .iter()
+                                .array_chunks::<3>()
+                                .flat_map(|[r, g, b]| [*r, *g, *b, 0xFF])
+                                .collect(),
+                        ),
+                    )
+                }
+                [16, 16, 0, 0]
+                    if !self.does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_2_to_4(format),
+                        Cow::Owned(bytemuck::cast_vec(
+                            bytemuck::cast_slice::<u8, u16>(pixels)
+                                .iter()
+                                .array_chunks::<2>()
+                                .flat_map(|[r, g]| [*r, *g, *r, *g])
+                                .collect::<Vec<u16>>(),
+                        )),
+                    )
+                }
+                [16, 16, 16, 0]
+                    if !self.does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_3_to_4(format),
+                        Cow::Owned(bytemuck::cast_vec(
+                            bytemuck::cast_slice::<u8, u16>(pixels)
+                                .iter()
+                                .array_chunks::<3>()
+                                .flat_map(|[r, g, b]| [*r, *g, *b, 0xFFFF])
+                                .collect::<Vec<u16>>(),
+                        )),
+                    )
+                }
+                [32, 32, 0, 0]
+                    if !self.does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_2_to_4(format),
+                        Cow::Owned(bytemuck::cast_vec(
+                            bytemuck::cast_slice::<u8, f32>(pixels)
+                                .iter()
+                                .array_chunks::<2>()
+                                .flat_map(|[r, g]| [*r, *g, *r, *g])
+                                .collect::<Vec<f32>>(),
+                        )),
+                    )
+                }
+                [32, 32, 32, 0]
+                    if !self.does_format_support(format, FormatFeatures::SAMPLED_IMAGE) =>
+                {
+                    (
+                        format_3_to_4(format),
+                        Cow::Owned(bytemuck::cast_vec(
+                            bytemuck::cast_slice::<u8, f32>(pixels)
+                                .iter()
+                                .array_chunks::<3>()
+                                .flat_map(|[r, g, b]| [*r, *g, *b, 1.0])
+                                .collect::<Vec<f32>>(),
+                        )),
+                    )
+                }
+                _ => (format, Cow::Borrowed(pixels)),
+            }
+        };
+
+        self.create_filled_image(size, format, ImageUsage::SAMPLED, &pixels)
+            .1
+    }
+
     pub fn create_accel_struct(
         &self,
         bottom_level: bool,
@@ -450,6 +559,48 @@ impl Gpu {
     }
 }
 
+pub fn get_descriptor_size(resource: &DescriptorBindingResources) -> u64 {
+    fn image_view(view: &Arc<ImageView>) -> u64 {
+        view.image()
+            .extent()
+            .iter()
+            .map(move |v| *v as u64)
+            .product::<u64>()
+            * view.format().block_size()
+    }
+
+    match resource {
+        DescriptorBindingResources::None(_) => 0,
+        DescriptorBindingResources::Buffer(elements) => elements
+            .iter()
+            .flatten()
+            .map(move |info| info.buffer.clone().slice(info.range.clone()).size())
+            .sum(),
+        DescriptorBindingResources::BufferView(elements) => elements
+            .iter()
+            .flatten()
+            .map(move |view| view.buffer().size())
+            .sum(),
+        DescriptorBindingResources::ImageView(elements) => elements
+            .iter()
+            .flatten()
+            .map(move |info| image_view(&info.image_view))
+            .sum(),
+        DescriptorBindingResources::ImageViewSampler(elements) => elements
+            .iter()
+            .flatten()
+            .map(move |(info, _)| image_view(&info.image_view))
+            .sum(),
+        DescriptorBindingResources::Sampler(_) => 0,
+        DescriptorBindingResources::InlineUniformBlock => 0,
+        DescriptorBindingResources::AccelerationStructure(elements) => elements
+            .iter()
+            .flatten()
+            .map(move |accel_struct| accel_struct.size())
+            .sum(),
+    }
+}
+
 fn align_up(buffer: Subbuffer<[u8]>, alignment: DeviceSize) -> Subbuffer<[u8]> {
     let address: DeviceSize = buffer.device_address().unwrap().into();
     let remainder = address % alignment;
@@ -493,4 +644,24 @@ fn find_queue_family_index(physical_device: &PhysicalDevice) -> Option<u32> {
         .iter()
         .position(move |props| props.queue_flags.contains(QueueFlags::COMPUTE))
         .map(move |i| i as u32)
+}
+
+fn format_2_to_4(format: Format) -> Format {
+    match format {
+        Format::R8G8_UNORM => Format::R8G8B8A8_UNORM,
+        Format::R8G8_SRGB => Format::R8G8B8A8_SRGB,
+        Format::R16G16_UNORM => Format::R16G16B16A16_UNORM,
+        Format::R32G32_SFLOAT => Format::R32G32B32A32_SFLOAT,
+        _ => unimplemented!(),
+    }
+}
+
+fn format_3_to_4(format: Format) -> Format {
+    match format {
+        Format::R8G8B8_UNORM => Format::R8G8B8A8_UNORM,
+        Format::R8G8B8_SRGB => Format::R8G8B8A8_SRGB,
+        Format::R16G16B16_UNORM => Format::R16G16B16A16_UNORM,
+        Format::R32G32B32_SFLOAT => Format::R32G32B32A32_SFLOAT,
+        _ => unimplemented!(),
+    }
 }
