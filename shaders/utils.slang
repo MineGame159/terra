@@ -99,3 +99,9 @@ float3 HueClamp(float3 color, float limit) {
 float3 OrientNormal(float3 normal, float3 view) {
     return dot(normal, view) < 0.0 ? -normal : normal;
 }
+
+float PowerHeuristic(float f_pdf, float g_pdf) {
+    let f2 = f_pdf * f_pdf;
+    let g2 = g_pdf * g_pdf;
+    return f2 / (f2 + g2);
+}

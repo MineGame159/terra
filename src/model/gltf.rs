@@ -4,6 +4,7 @@ use glam::{Mat4, Quat, Vec2, Vec3, Vec4, uvec2};
 use gltf::{
     Image, Material, Mesh, Node, Primitive, Texture,
     camera::Projection,
+    khr_lights_punctual::Kind,
     material::AlphaMode,
     mesh::{Mode, util::ReadIndices},
     scene::Transform,
@@ -66,6 +67,37 @@ impl ModelLoader<'_> {
                     world::MeshInstance { mesh, material },
                 ));
             }
+        }
+
+        // Light
+        if let Some(light) = node.light() {
+            let color = Vec3::from_array(light.color()) * (light.intensity() / 683.0);
+
+            match light.kind() {
+                Kind::Point => self.world.spawn((
+                    world::Node::from(transform),
+                    world::PointLight {
+                        color,
+                        range: light.range().unwrap_or(0.0),
+                    },
+                )),
+                Kind::Spot {
+                    inner_cone_angle,
+                    outer_cone_angle,
+                } => self.world.spawn((
+                    world::Node::from(transform),
+                    world::SpotLight {
+                        color,
+                        range: light.range().unwrap_or(0.0),
+                        inner_cone_angle,
+                        outer_cone_angle,
+                    },
+                )),
+                Kind::Directional => self.world.spawn((
+                    world::Node::from(transform),
+                    world::DirectionalLight { color },
+                )),
+            };
         }
 
         // Children

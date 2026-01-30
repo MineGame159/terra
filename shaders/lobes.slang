@@ -108,7 +108,7 @@ float3 EvalOrenNayar(float3 albedo, float roughness, float3 N, float3 L, float3 
 
 float PdfCosineHemisphere(float3 N, float3 L) {
     let dotNL = max(dot(N, L), 0.0);
-    return dotNL / float.getPi();
+    return max(dotNL / float.getPi(), 1e-6);
 }
 
 // --- Specular Lobe (GGX / Microfacet) ---
@@ -196,14 +196,12 @@ BsdfEval SampleMicrofacetVNDF(inout uint state, float3 N, float3 V, float alpha)
     // G1(V) = 2 * (N.V) / ((N.V) + sqrt(alpha^2 + (1-alpha^2)(N.V)^2))
     let alpha2 = alpha * alpha;
     let lambdaV = sqrt(alpha2 + (1.0 - alpha2) * dotNV * dotNV);
-    let G1_V = 2.0 * dotNV / (dotNV + lambdaV);
 
     // PDF in Half-Vector space
-    // pdf_h = (G1_V * dotVH * D) / dotNV;
-
-    // Convert to Light Vector space (pdf_l = pdf_h / (4 * dotVH))
-    // The dotVH terms cancel out beautifully!
-    let pdf = (G1_V * D) / (4.0 * dotNV);
+    // Original unstable form: let pdf = (G1_V * D) / (4.0 * dotNV);
+    // Stable form: D / (2.0 * (N.V + lambda_v))
+    // We already calculated lambdaV earlier for G1_V logic
+    let pdf = D / (2.0 * (dotNV + lambdaV));
 
     return BsdfEval(L, pdf);
 }
@@ -226,13 +224,23 @@ float3 EvalMicrofacet(float3 N, float3 V, float3 L, float alpha, float3 F0) {
     return D * V_term * F;
 }
 
-float PdfMicrofacet(float3 N, float3 V, float3 L, float alpha) {
-    if (dot(N, L) <= 0.0) return 0.0;
+float PdfMicrofacetVNDF(float3 N, float3 V, float3 L, float alpha) {
+    if (dot(N, L) <= 0.0 || dot(N, V) <= 0.0) return 0.0;
 
     let H = normalize(V + L);
-    let dotNH = max(dot(N, H), 0.0);
-    let dotVH = max(dot(V, H), 0.0);
+    let dotNH = clamp(dot(N, H), 0.0, 1.0);
+    // Note: VNDF Sampling doesn't use dotVH in the PDF denominator,
+    // it simplifies to D / (2 * (N.V + lambdaV))
+
+    let alpha2 = alpha * alpha;
+    let dotNV = clamp(dot(N, V), 0.0, 1.0);
+
+    // Recalculate lambdaV (same as in SampleMicrofacetVNDF)
+    let lambdaV = sqrt(alpha2 + (1.0 - alpha2) * dotNV * dotNV);
 
     let D = D_GGX(dotNH, alpha);
-    return (D * dotNH) / (4.0 * dotVH);
+
+    // PDF = D * G1(V) / (4 * N.V)
+    // This simplifies to:
+    return D / (2.0 * (dotNV + lambdaV) + 1e-6);
 }

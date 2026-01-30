@@ -178,6 +178,25 @@ pub struct Camera {
     pub fov: f32,
 }
 
+#[derive(PartialEq, Clone)]
+pub struct PointLight {
+    pub color: Vec3,
+    pub range: f32,
+}
+
+#[derive(PartialEq, Clone)]
+pub struct SpotLight {
+    pub color: Vec3,
+    pub range: f32,
+    pub inner_cone_angle: f32,
+    pub outer_cone_angle: f32,
+}
+
+#[derive(PartialEq, Clone)]
+pub struct DirectionalLight {
+    pub color: Vec3,
+}
+
 // --- Tangent generation ---
 
 struct MeshGeometry<'a> {

@@ -1,5 +1,7 @@
 import "utils";
 import "materials";
+import "env_map";
+import "lights";
 
 struct Camera {
     float3 origin;
@@ -90,8 +92,17 @@ StructuredBuffer<Instance> instances;
 [vk_binding(2, 0)]
 ConstantBuffer<Sampler2D<float4>[]> textures;
 
+[vk_binding(3, 0)]
+StructuredBuffer<Light> lights;
+
 [vk_binding(0, 1)]
-Sampler2D<float3> environmentMap;
+Sampler2D<float3> envMap;
+
+[vk_binding(1, 1)]
+StructuredBuffer<float> envMapCdfMarginal;
+
+[vk_binding(2, 1)]
+StructuredBuffer<float> envMapCdfConditional;
 
 [vk_binding(0, 2), format("rgba32f")]
 RWTexture2D image;
@@ -107,6 +118,14 @@ struct RayPayload {
 
     float3 color;
     float3 emissive;
+    float3 direct_light;
+
+    float pdf;
+}
+
+struct ShadowPayload {
+    uint rng;
+    bool hit;
 }
 
 [shader("raygen")]
@@ -126,34 +145,37 @@ void RayGen() {
     ray.TMax = float.maxValue;
 
     // Trace ray
-    var color = float3(1);
-    var light = float3(0);
+    var throughput = float3(1);
+    var radiance = float3(0);
 
     RayPayload payload;
     payload.rng = rng;
+    payload.pdf = 0.0;
 
     for (uint i = 0; i < pc.bounces; i++) {
         // Trace
         payload.depth = i;
+
         TraceRay(accelStruct, RAY_FLAG_NONE, 0xFF, 0, 0, pc.missIndex, ray, payload);
 
         // Miss
         if (!payload.hit) {
-            light += color * payload.color;
+            radiance += throughput * payload.emissive;
             break;
         }
 
         // Hit
-        light += color * payload.emissive;
+        radiance += throughput * payload.emissive;
+        radiance += throughput * payload.direct_light;
 
         ray.Origin = payload.new_origin;
         ray.Direction = payload.new_direction;
 
-        color *= payload.color;
+        throughput *= payload.color;
 
         // Russian Roulette
         if (i > 3) {
-            let p = clamp(max(color.r, max(color.g, color.b)), 0.05, 1.0);
+            let p = clamp(max(throughput.r, max(throughput.g, throughput.b)), 0.05, 1.0);
 
             // If the ray is very dark, giving it a chance to die
             if (Random(payload.rng) > p) {
@@ -161,18 +183,18 @@ void RayGen() {
             }
 
             // If it survives, boost energy so the average remains correct
-            color *= 1.0 / p;
+            throughput *= 1.0 / p;
         }
     }
 
     // Accumulate color
     let weight = 1.0 / (pc.sample + 1);
     let pos = uint2(id.x, pc.size.y - id.y - 1);
-    image[pos] = image[pos] * (1 - weight) + float4(light, 1) * weight;
+    image[pos] = image[pos] * (1 - weight) + float4(radiance, 1) * weight;
 }
 
 [shader("anyhit")]
-void AnyHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attributes) {
+void AnyHit(inout ShadowPayload payload, in BuiltInTriangleIntersectionAttributes attributes) {
     let instance = instances[CustomInstanceIndex()];
     let vertex = InterpolateAttributes(attributes.barycentrics, instance);
 
@@ -190,40 +212,110 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     let vertex = InterpolateAttributes(attributes.barycentrics, instance);
     let mat = GetMaterialProps(instance.material, vertex.uv);
 
-    // Fill in surface interaction
     SurfaceInteraction si;
     si.position = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
     si.view = -WorldRayDirection();
-    si.normal = OrientNormal(normalize(mul((float3x3) ObjectToWorld(), vertex.normal)), si.view);
+    si.normal_geo = OrientNormal(normalize(mul((float3x3) ObjectToWorld(), vertex.normal)), si.view);
 
-    // Calculate new origin
-    payload.new_origin = si.position + si.normal * (1e-4 + RayTCurrent() * 1e-5);
+    SampleNormalMap(vertex, instance.material, si);
 
-    // Sample material
-    BsdfSample sample;
+    // --- Emission ---
 
     let ccProb = GetClearcoatProbability(si, mat);
 
-    if (Random(payload.rng) < ccProb) {
-        // --- Clear coat ---
-        sample = SampleClearcoatLayer(payload.rng, si, mat);
-        sample.weight /= ccProb;
-
-        payload.emissive = float3(0.0);
+    if (length(instance.material.emissive_factor.rgb) > 0.0) {
+        payload.emissive = instance.material.emissive(vertex.uv) * (1.0 - ccProb);
     } else {
-        // --- Base layer ---
-        SampleNormalMap(vertex, instance.material, si);
-
-        sample = SampleBaseLayer(payload.rng, si, mat);
-        sample.weight /= 1.0 - ccProb;
-
-        payload.emissive = instance.material.emissive(vertex.uv) / (1.0 - ccProb);
+        payload.emissive = float3(0.0);
     }
 
-    // Fill in payload from sample
+    payload.direct_light = 0.0;
+
+    // --- Environment Map NEE ---
+
+    if (pc.missIndex == 1) {
+        let sample = SampleEnvironment(GetEnvCDF(), envMap, pc.envRotation, pc.envIntensity, float2(Random(payload.rng), Random(payload.rng)));
+
+        if (dot(si.normal, sample.dir) > 0.0 && dot(si.normal_geo, sample.dir) > 0.0) {
+            let occluded = TraceShadowRay(payload.rng, si.position + si.normal * 1e-4, sample.dir, 1e9);
+
+            if (!occluded) {
+                let eval = EvaluateLayeredMaterial(si, sample.dir, mat);
+
+                let weight = PowerHeuristic(sample.pdf, eval.pdf);
+                let dotNL = clamp(dot(si.normal, sample.dir), 0.0, 1.0);
+
+                if (eval.pdf > 0.0) {
+                    var li = sample.Li;
+                    if (payload.depth > 0) li = HueClamp(li, 20);
+
+                    let misTerm = sample.pdf / (sample.pdf * sample.pdf + eval.pdf * eval.pdf + 1e-10);
+                    let contribution = li * eval.value * dotNL * misTerm;
+
+                    payload.direct_light += contribution;
+                }
+            }
+        }
+    }
+
+    // --- Direct Light NEE ---
+
+    let lightCount = lights.getCount();
+
+    if (lightCount > 0) {
+        let index = min(uint(Random(payload.rng) * float(lightCount)), lightCount - 1);
+        let sample = lights[index].Sample(si.position);
+
+        if (dot(si.normal, sample.dir) > 0.0 && dot(si.normal_geo, sample.dir) > 0.0) {
+            let occluded = TraceShadowRay(payload.rng, si.position + si.normal * 1e-4, sample.dir, sample.dist);
+
+            if (!occluded) {
+                let eval = EvaluateLayeredMaterial(si, sample.dir, mat);
+
+                let lightPdf = 1.0 / float(lightCount);
+                let dotNL = clamp(dot(si.normal, sample.dir), 0.0, 1.0);
+                let weight = float(lightCount);
+
+                payload.direct_light += sample.Li * eval.value * dotNL * weight;
+            }
+        }
+    }
+
+    // --- BSDF ---
+
+    BsdfSample sample;
+
+    // Use random number to select layer
+    if (Random(payload.rng) < ccProb) {
+        // --- Clearcoat Layer (Uses Geometric Normal) ---
+        sample = SampleClearcoatLayer(payload.rng, si, mat);
+
+        // Adjust weight for the selection probability
+        if (ccProb > 0.0) sample.weight /= ccProb;
+
+    } else {
+        // --- Base Layer (Uses Mapped / Shading Normal) ---
+        sample = SampleBaseLayer(payload.rng, si, mat);
+
+        // Adjust weight for the selection probability
+        if ((1.0 - ccProb) > 0.0) sample.weight /= (1.0 - ccProb);
+    }
+
     payload.hit = sample.valid;
+    payload.new_origin = si.position + si.normal * (1e-4 + RayTCurrent() * 1e-5);
     payload.new_direction = sample.L;
-    payload.color = sample.weight;
+    payload.color = float3(0.0);
+    payload.pdf = 0.0;
+
+    if (sample.valid) {
+        let eval = EvaluateLayeredMaterial(si, sample.L, mat);
+        let dotNL = clamp(dot(si.normal, sample.L), 0.0, 1.0);
+
+        if (eval.pdf > 0.0) {
+            payload.color = eval.value * dotNL / eval.pdf;
+            payload.pdf = eval.pdf;
+        }
+    }
 }
 
 [shader("miss")]
@@ -231,11 +323,20 @@ void MissEnvMap(inout RayPayload payload) {
     let dir = normalize(WorldRayDirection());
     let uv = CartesianToSpherical(dir, pc.envRotation);
 
-    var color = environmentMap.SampleLevelZero(uv) * pc.envIntensity;
+    var color = envMap.SampleLevelZero(uv) * pc.envIntensity;
     if (payload.depth > 0) color = HueClamp(color, 20);
 
+    var mis_weight = 1.0;
+
+    if (payload.depth > 0) {
+        let bsdf_pdf = payload.pdf;
+        let light_pdf = PdfEnvironment(GetEnvCDF(), dir, pc.envRotation);
+
+        mis_weight = PowerHeuristic(bsdf_pdf, light_pdf);
+    }
+
     payload.hit = false;
-    payload.color = color;
+    payload.emissive = color * mis_weight;
 }
 
 [shader("miss")]
@@ -243,7 +344,35 @@ void MissGeneric(inout RayPayload payload) {
     let dir = normalize(WorldRayDirection());
 
     payload.hit = false;
-    payload.color = GetBackground(dir);
+    payload.emissive = GetBackground(dir);
+}
+
+[shader("miss")]
+void MissShadow(inout ShadowPayload payload) {
+    payload.hit = false;
+}
+
+bool TraceShadowRay(uint rng, float3 origin, float3 dir, float dist) {
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = dir;
+    ray.TMin = 1e-4;
+    ray.TMax = dist - 1e-4;
+
+    ShadowPayload payload;
+    payload.rng = rng;
+    payload.hit = true;
+
+    TraceRay(
+        accelStruct,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,
+        0xFF,
+        0, 0, 2,
+        ray,
+        payload
+    );
+
+    return payload.hit;
 }
 
 Vertex InterpolateAttributes(float2 barycentrics, Instance instance) {
@@ -287,16 +416,27 @@ float4 SampleTexture(uint texture, float2 uv) {
 }
 
 void SampleNormalMap(Vertex vertex, Material* material, inout SurfaceInteraction si) {
-    if (material.normal_texture > 0) {
-        let normal_geo = si.normal;
+    si.normal = si.normal_geo;
 
+    if (material.normal_texture > 0) {
         let N_map = textures[material.normal_texture - 1].SampleLevelZero(vertex.uv).xyz;
         si.normal = NormalMap(vertex.tangent, si.normal, N_map);
 
-        if (dot(si.normal, normal_geo) < 0.0) {
-            si.normal = normal_geo;
+        if (dot(si.normal, si.normal_geo) < 0.0) {
+            si.normal = si.normal_geo;
         } else {
             si.normal = OrientNormal(si.normal, si.view);
         }
     }
+}
+
+EnvMapCDF GetEnvCDF() {
+    EnvMapCDF cdf;
+
+    cdf.marginal = envMapCdfMarginal;
+    cdf.conditional = envMapCdfConditional;
+
+    envMap.GetDimensions(cdf.size.x, cdf.size.y);
+
+    return cdf;
 }

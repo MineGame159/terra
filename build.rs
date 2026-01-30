@@ -1,5 +1,4 @@
-use std::process::Command;
-use std::{env, fs};
+use std::{env, fs, process::Command};
 
 fn main() {
     compile_shader("ray");
@@ -27,13 +26,18 @@ fn compile_shader(name: &str) {
         String::from_utf8(out.stderr)
             .unwrap()
             .lines()
-            .map(move |line| {
-                let start = line.find("'").unwrap();
-                let end = line.rfind("'").unwrap();
-                &line[start + 1..end]
+            .filter_map(move |line| {
+                if let Some(start) = line.find("'")
+                    && let Some(end) = line.rfind("'")
+                {
+                    Some(&line[start + 1..end])
+                } else {
+                    println!("cargo::error={}", line);
+                    None
+                }
             })
             .for_each(move |file| {
-                println!("cargo:rerun-if-changed={}", file);
+                println!("cargo::rerun-if-changed={}", file);
             });
     }
 
@@ -45,6 +49,7 @@ fn compile_shader(name: &str) {
         let out = Command::new("slangc")
             .arg("-target")
             .arg("spirv")
+            .arg("-preserve-params")
             .arg("-o")
             .arg(format!("{}/{}.spv", out_dir, name))
             .arg(&path)

@@ -1,7 +1,7 @@
-use std::{collections::HashSet, fs, sync::Arc, time::Duration};
+use std::{collections::HashSet, f32, fs, sync::Arc, time::Duration};
 
 use bytesize::ByteSize;
-use glam::{Vec3, Vec4, uvec2, vec3};
+use glam::{UVec2, Vec3, Vec4, Vec4Swizzles, uvec2, vec3};
 use hecs::World;
 use smallvec::smallvec;
 use vulkano::{
@@ -37,7 +37,7 @@ use zune_hdr::HdrDecoder;
 
 use crate::{
     gpu::{DescriptorInfo, Gpu, get_descriptor_size},
-    world::{Camera, MeshInstance, Node, Texture, Vertex},
+    world::{Camera, DirectionalLight, MeshInstance, Node, PointLight, SpotLight, Texture, Vertex},
 };
 
 #[derive(Copy, Clone)]
@@ -151,6 +151,19 @@ struct Instance {
     material: DeviceAddress,
 }
 
+#[derive(BufferContents, Copy, Clone)]
+#[repr(C)]
+struct Light {
+    type_: u32,
+    range: f32,
+    inner_cone_cos: f32,
+    outer_cone_cos: f32,
+
+    position: Vec4,
+    color: Vec4,
+    direction: Vec4,
+}
+
 #[derive(Copy, Clone)]
 pub struct Stats {
     pub mesh_count: usize,
@@ -236,28 +249,22 @@ impl<'a> Renderer<'a> {
         ) -> u32 {
             match texture {
                 Some((view, sampler)) => {
-                    /*textures
-                    .iter()
-                    .position(|(info, sampler2)| &info.image_view == view && sampler2 == sampler)
-                    .unwrap_or_else(move || {
-                        textures.push((
-                            DescriptorImageViewInfo {
-                                image_view: view.clone(),
-                                image_layout: ImageLayout::ShaderReadOnlyOptimal,
-                            },
-                            sampler.clone(),
-                        ));
-                        textures.len() - 1
-                    }) as u32
-                    + 1*/
-                    textures.push((
-                        DescriptorImageViewInfo {
-                            image_view: view.clone(),
-                            image_layout: ImageLayout::ShaderReadOnlyOptimal,
-                        },
-                        sampler.clone(),
-                    ));
-                    textures.len() as u32
+                    textures
+                        .iter()
+                        .position(|(info, sampler2)| {
+                            &info.image_view == view && sampler2 == sampler
+                        })
+                        .unwrap_or_else(move || {
+                            textures.push((
+                                DescriptorImageViewInfo {
+                                    image_view: view.clone(),
+                                    image_layout: ImageLayout::ShaderReadOnlyOptimal,
+                                },
+                                sampler.clone(),
+                            ));
+                            textures.len() - 1
+                        }) as u32
+                        + 1
                 }
                 None => 0,
             }
@@ -407,6 +414,46 @@ impl<'a> Renderer<'a> {
 
         self.accel_struct = Some(accel_struct.clone());
 
+        // Find lights
+
+        let mut lights = Vec::with_capacity(8);
+
+        for (node, light) in world.query_mut::<(&Node, &PointLight)>() {
+            lights.push(Light {
+                type_: 0,
+                range: light.range,
+                inner_cone_cos: 0.0,
+                outer_cone_cos: 0.0,
+                position: node.position.extend(0.0),
+                color: light.color.extend(0.0),
+                direction: Vec4::ZERO,
+            });
+        }
+
+        for (node, light) in world.query_mut::<(&Node, &SpotLight)>() {
+            lights.push(Light {
+                type_: 1,
+                range: light.range,
+                inner_cone_cos: light.inner_cone_angle.cos(),
+                outer_cone_cos: light.outer_cone_angle.cos(),
+                position: node.position.extend(0.0),
+                color: light.color.extend(0.0),
+                direction: node.transform().transform_vector3(Vec3::NEG_Z).extend(0.0),
+            });
+        }
+
+        for (node, light) in world.query_mut::<(&Node, &DirectionalLight)>() {
+            lights.push(Light {
+                type_: 2,
+                range: 0.0,
+                inner_cone_cos: 0.0,
+                outer_cone_cos: 0.0,
+                position: node.position.extend(0.0),
+                color: light.color.extend(0.0),
+                direction: node.transform().transform_vector3(Vec3::NEG_Z).extend(0.0),
+            });
+        }
+
         // Create scene descriptor set
 
         let mut writes = vec![
@@ -418,6 +465,14 @@ impl<'a> Renderer<'a> {
             writes.push(WriteDescriptorSet::image_view_with_layout_sampler_array(
                 2, 0, textures,
             ));
+        }
+
+        if !lights.is_empty() {
+            let light_buffer = self
+                .gpu
+                .create_filled_buffer(BufferUsage::STORAGE_BUFFER, &lights);
+
+            writes.push(WriteDescriptorSet::buffer(3, light_buffer));
         }
 
         self.scene_set = Some(
@@ -633,20 +688,29 @@ impl<'a> Renderer<'a> {
         )
         .unwrap();
 
+        // Create CDF buffers
+
+        let (conditional_buffer, marginal_buffer) =
+            self.create_env_map_cdf_buffers(env_size, bytemuck::cast_slice(&env_pixels));
+
         // Create set
 
         self.env_map_set = Some(
             DescriptorSet::new(
                 self.gpu.set_allocator.clone(),
                 self.env_map_set_layout.clone(),
-                [WriteDescriptorSet::image_view_with_layout_sampler(
-                    0,
-                    DescriptorImageViewInfo {
-                        image_view: view.clone(),
-                        image_layout: ImageLayout::ShaderReadOnlyOptimal,
-                    },
-                    sampler.clone(),
-                )],
+                [
+                    WriteDescriptorSet::image_view_with_layout_sampler(
+                        0,
+                        DescriptorImageViewInfo {
+                            image_view: view.clone(),
+                            image_layout: ImageLayout::ShaderReadOnlyOptimal,
+                        },
+                        sampler.clone(),
+                    ),
+                    WriteDescriptorSet::buffer(1, marginal_buffer),
+                    WriteDescriptorSet::buffer(2, conditional_buffer),
+                ],
                 None,
             )
             .unwrap(),
@@ -671,26 +735,120 @@ impl<'a> Renderer<'a> {
         )
         .unwrap();
 
+        // Create CDF buffers
+
+        let (conditional_buffer, marginal_buffer) =
+            self.create_env_map_cdf_buffers(uvec2(1, 1), &[Vec4::ONE]);
+
         // Create set
 
         self.env_map_set = Some(
             DescriptorSet::new(
                 self.gpu.set_allocator.clone(),
                 self.env_map_set_layout.clone(),
-                [WriteDescriptorSet::image_view_with_layout_sampler(
-                    0,
-                    DescriptorImageViewInfo {
-                        image_view: view.clone(),
-                        image_layout: ImageLayout::ShaderReadOnlyOptimal,
-                    },
-                    sampler.clone(),
-                )],
+                [
+                    WriteDescriptorSet::image_view_with_layout_sampler(
+                        0,
+                        DescriptorImageViewInfo {
+                            image_view: view.clone(),
+                            image_layout: ImageLayout::ShaderReadOnlyOptimal,
+                        },
+                        sampler.clone(),
+                    ),
+                    WriteDescriptorSet::buffer(1, marginal_buffer),
+                    WriteDescriptorSet::buffer(2, conditional_buffer),
+                ],
                 None,
             )
             .unwrap(),
         );
 
         self.has_env_map = false;
+    }
+
+    fn create_env_map_cdf_buffers(
+        &self,
+        size: UVec2,
+        pixels: &[Vec4],
+    ) -> (Subbuffer<[f32]>, Subbuffer<[f32]>) {
+        macro_rules! index {
+            ($x:expr, $y:expr) => {
+                ($y * size.x + $x) as usize
+            };
+        }
+
+        let mut conditional = vec![0.0; (size.x * size.y) as usize];
+        let mut marginal = vec![0.0; size.y as usize];
+
+        // Calculate weight for each pixel
+
+        for y in 0..size.y {
+            let v = (y as f32 + 0.5) / size.y as f32;
+            let sin_theta = (v * f32::consts::PI).sin();
+
+            for x in 0..size.x {
+                let i = index!(x, y);
+
+                let luminance = pixels[i].xyz().dot(vec3(0.2126, 0.7152, 0.0722));
+                conditional[i] = luminance * sin_theta;
+            }
+        }
+
+        // Prefix sum and accumulate rows
+
+        for y in 0..size.y {
+            let mut sum = 0.0;
+
+            for x in 0..size.x {
+                let i = index!(x, y);
+
+                sum += conditional[i];
+                conditional[i] = sum;
+            }
+
+            if sum > 1e-6 {
+                for x in 0..size.x {
+                    conditional[index!(x, y)] /= sum;
+                }
+            } else {
+                for x in 0..size.x {
+                    conditional[index!(x, y)] = (x as f32 + 1.0) / size.x as f32;
+                }
+            }
+
+            marginal[y as usize] = sum;
+        }
+
+        // Accumulate marginal
+
+        let mut total_sum = 0.0;
+
+        for y in 0..size.y {
+            total_sum += marginal[y as usize];
+            marginal[y as usize] = total_sum;
+        }
+
+        if total_sum > 1e-6 {
+            for y in 0..size.y {
+                marginal[y as usize] /= total_sum;
+            }
+        } else {
+            for y in 0..size.y {
+                marginal[y as usize] = (y as f32 + 1.0) / size.y as f32;
+            }
+        }
+
+        // Create buffers
+
+        let conditional_buffer = self
+            .gpu
+            .create_filled_buffer(BufferUsage::STORAGE_BUFFER, &conditional);
+
+        let marginal_buffer = self
+            .gpu
+            .create_filled_buffer(BufferUsage::STORAGE_BUFFER, &marginal);
+
+        (conditional_buffer, marginal_buffer)
     }
 
     fn setup_output_set(&mut self, view: Arc<ImageView>) {
@@ -729,7 +887,7 @@ impl<'a> Renderer<'a> {
 fn create_scene_set_layout(gpu: &Gpu) -> Arc<DescriptorSetLayout> {
     gpu.create_set_layout(&[
         DescriptorInfo {
-            stages: ShaderStages::RAYGEN,
+            stages: ShaderStages::RAYGEN | ShaderStages::CLOSEST_HIT,
             type_: DescriptorType::AccelerationStructure,
             count: 1,
         },
@@ -743,16 +901,33 @@ fn create_scene_set_layout(gpu: &Gpu) -> Arc<DescriptorSetLayout> {
             type_: DescriptorType::CombinedImageSampler,
             count: 1024,
         },
+        DescriptorInfo {
+            stages: ShaderStages::CLOSEST_HIT,
+            type_: DescriptorType::StorageBuffer,
+            count: 1,
+        },
     ])
 }
 
 #[profiling::function]
 fn create_env_map_set_layout(gpu: &Gpu) -> Arc<DescriptorSetLayout> {
-    gpu.create_set_layout(&[DescriptorInfo {
-        stages: ShaderStages::MISS,
-        type_: DescriptorType::CombinedImageSampler,
-        count: 1,
-    }])
+    gpu.create_set_layout(&[
+        DescriptorInfo {
+            stages: ShaderStages::MISS | ShaderStages::CLOSEST_HIT,
+            type_: DescriptorType::CombinedImageSampler,
+            count: 1,
+        },
+        DescriptorInfo {
+            stages: ShaderStages::MISS | ShaderStages::CLOSEST_HIT,
+            type_: DescriptorType::StorageBuffer,
+            count: 1,
+        },
+        DescriptorInfo {
+            stages: ShaderStages::MISS | ShaderStages::CLOSEST_HIT,
+            type_: DescriptorType::StorageBuffer,
+            count: 1,
+        },
+    ])
 }
 
 #[profiling::function]
@@ -769,7 +944,8 @@ fn create_pipeline(
     gpu: &Gpu,
     set_layouts: Vec<Arc<DescriptorSetLayout>>,
 ) -> Arc<RayTracingPipeline> {
-    const SPV_RAY: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/ray.spv"));
+    const SPV_RAY: &'static [u8] =
+        include_bytes!(concat!(env!("OUT_DIR"), "/shaders/ray.spv"));
 
     let module = unsafe {
         ShaderModule::new(
@@ -784,7 +960,7 @@ fn create_pipeline(
         PipelineLayoutCreateInfo {
             set_layouts,
             push_constant_ranges: vec![PushConstantRange {
-                stages: ShaderStages::RAYGEN | ShaderStages::MISS,
+                stages: ShaderStages::RAYGEN | ShaderStages::CLOSEST_HIT | ShaderStages::MISS,
                 offset: 0,
                 size: size_of::<PushConstants>() as u32,
             }],
@@ -801,23 +977,25 @@ fn create_pipeline(
                 PipelineShaderStageCreateInfo::new(module.entry_point("RayGen").unwrap()),
                 PipelineShaderStageCreateInfo::new(module.entry_point("MissGeneric").unwrap()),
                 PipelineShaderStageCreateInfo::new(module.entry_point("MissEnvMap").unwrap()),
+                PipelineShaderStageCreateInfo::new(module.entry_point("MissShadow").unwrap()),
                 PipelineShaderStageCreateInfo::new(module.entry_point("AnyHit").unwrap()),
                 PipelineShaderStageCreateInfo::new(module.entry_point("ClosestHit").unwrap()),
             ],
             groups: smallvec![
-                RayTracingShaderGroupCreateInfo::General { general_shader: 0 },
-                RayTracingShaderGroupCreateInfo::General { general_shader: 1 },
-                RayTracingShaderGroupCreateInfo::General { general_shader: 2 },
+                RayTracingShaderGroupCreateInfo::General { general_shader: 0 }, // RayGen
+                RayTracingShaderGroupCreateInfo::General { general_shader: 1 }, // MissGeneric
+                RayTracingShaderGroupCreateInfo::General { general_shader: 2 }, // MissEnvMap
+                RayTracingShaderGroupCreateInfo::General { general_shader: 3 }, // MissShadow
                 RayTracingShaderGroupCreateInfo::TrianglesHit {
-                    closest_hit_shader: Some(4),
+                    closest_hit_shader: Some(5), // ClosestHit
                     any_hit_shader: None,
                 },
                 RayTracingShaderGroupCreateInfo::TrianglesHit {
-                    closest_hit_shader: Some(4),
-                    any_hit_shader: Some(3),
+                    closest_hit_shader: Some(5), // ClosestHit
+                    any_hit_shader: Some(4),     // AnyHit
                 },
             ],
-            max_pipeline_ray_recursion_depth: 1,
+            max_pipeline_ray_recursion_depth: 2,
             ..RayTracingPipelineCreateInfo::layout(layout.clone())
         },
     )
