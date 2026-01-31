@@ -1,7 +1,7 @@
 use std::{collections::HashSet, f32, fs, sync::Arc, time::Duration};
 
 use bytesize::ByteSize;
-use glam::{UVec2, Vec3, Vec4, Vec4Swizzles, uvec2, vec3};
+use glam::{UVec2, Vec3, Vec3A, Vec4, Vec4Swizzles, uvec2, vec3};
 use hecs::World;
 use smallvec::smallvec;
 use vulkano::{
@@ -60,10 +60,10 @@ impl Default for CameraInfo {
 #[derive(BufferContents, Copy, Clone)]
 #[repr(C)]
 struct CameraData {
-    origin: Vec4,
-    lower_left_corner: Vec4,
-    horizontal: Vec4,
-    vertical: Vec4,
+    origin: Vec3A,
+    lower_left_corner: Vec3A,
+    horizontal: Vec3A,
+    vertical: Vec3A,
 }
 
 impl CameraData {
@@ -78,14 +78,14 @@ impl CameraData {
         let v = w.cross(u);
 
         CameraData {
-            origin: info.position.extend(0.0),
-            horizontal: (viewport_width * u).extend(0.0),
-            vertical: (viewport_height * v).extend(0.0),
+            origin: info.position.into(),
+            horizontal: (viewport_width * u).into(),
+            vertical: (viewport_height * v).into(),
             lower_left_corner: (info.position
                 - (viewport_width * u) / 2.0
                 - (viewport_height * v) / 2.0
                 - w)
-                .extend(0.0),
+                .into(),
         }
     }
 }
@@ -119,7 +119,7 @@ struct Material {
     roughness_factor: f32,
     metallic_roughness_texture: u32,
 
-    emissive_factor: Vec4,
+    emissive_factor: Vec3A,
     emissive_texture: u32,
 
     ior: f32,
@@ -127,7 +127,7 @@ struct Material {
     specular_factor: f32,
     specular_texture: u32,
 
-    specular_color_factor: Vec4,
+    specular_color_factor: Vec3A,
     specular_color_texture: u32,
 
     clearcoat_factor: f32,
@@ -159,9 +159,9 @@ struct Light {
     inner_cone_cos: f32,
     outer_cone_cos: f32,
 
-    position: Vec4,
-    color: Vec4,
-    direction: Vec4,
+    position: Vec3A,
+    color: Vec3A,
+    direction: Vec3A,
 }
 
 #[derive(Copy, Clone)]
@@ -322,12 +322,12 @@ impl<'a> Renderer<'a> {
                         &mut textures,
                         &m.metallic_roughness_texture,
                     ),
-                    emissive_factor: m.emissive_factor.extend(0.0),
+                    emissive_factor: m.emissive_factor.into(),
                     emissive_texture: texture(&mut textures, &m.emissive_texture),
                     ior: m.ior,
                     specular_factor: m.specular_factor,
                     specular_texture: texture(&mut textures, &m.specular_texture),
-                    specular_color_factor: m.specular_color_factor.extend(0.0),
+                    specular_color_factor: m.specular_color_factor.into(),
                     specular_color_texture: texture(&mut textures, &m.specular_color_texture),
                     clearcoat_factor: m.clearcoat_factor,
                     clearcoat_texture: texture(&mut textures, &m.clearcoat_texture),
@@ -424,9 +424,9 @@ impl<'a> Renderer<'a> {
                 range: light.range,
                 inner_cone_cos: 0.0,
                 outer_cone_cos: 0.0,
-                position: node.position.extend(0.0),
-                color: light.color.extend(0.0),
-                direction: Vec4::ZERO,
+                position: node.position.into(),
+                color: light.color.into(),
+                direction: Vec3A::ZERO,
             });
         }
 
@@ -436,9 +436,9 @@ impl<'a> Renderer<'a> {
                 range: light.range,
                 inner_cone_cos: light.inner_cone_angle.cos(),
                 outer_cone_cos: light.outer_cone_angle.cos(),
-                position: node.position.extend(0.0),
-                color: light.color.extend(0.0),
-                direction: node.transform().transform_vector3(Vec3::NEG_Z).extend(0.0),
+                position: node.position.into(),
+                color: light.color.into(),
+                direction: node.transform().transform_vector3(Vec3::NEG_Z).into(),
             });
         }
 
@@ -448,9 +448,9 @@ impl<'a> Renderer<'a> {
                 range: 0.0,
                 inner_cone_cos: 0.0,
                 outer_cone_cos: 0.0,
-                position: node.position.extend(0.0),
-                color: light.color.extend(0.0),
-                direction: node.transform().transform_vector3(Vec3::NEG_Z).extend(0.0),
+                position: node.position.into(),
+                color: light.color.into(),
+                direction: node.transform().transform_vector3(Vec3::NEG_Z).into(),
             });
         }
 
@@ -944,8 +944,7 @@ fn create_pipeline(
     gpu: &Gpu,
     set_layouts: Vec<Arc<DescriptorSetLayout>>,
 ) -> Arc<RayTracingPipeline> {
-    const SPV_RAY: &'static [u8] =
-        include_bytes!(concat!(env!("OUT_DIR"), "/shaders/ray.spv"));
+    const SPV_RAY: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/ray.spv"));
 
     let module = unsafe {
         ShaderModule::new(

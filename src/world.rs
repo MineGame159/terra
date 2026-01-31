@@ -1,7 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 use bevy_mikktspace::Geometry;
-use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
 use vulkano::{
     buffer::{BufferContents, BufferUsage, Subbuffer},
     image::{sampler::Sampler, view::ImageView},
@@ -13,7 +13,7 @@ use crate::gpu::Gpu;
 #[repr(C)]
 pub struct Vertex {
     pub uv: Vec4,
-    pub normal: Vec4,
+    pub normal: Vec3A,
     pub tangent: Vec4,
 }
 
@@ -62,7 +62,7 @@ impl Mesh {
                     .zip(tangents.as_ref())
                     .map(move |((normal, uv), tangent)| Vertex {
                         uv: uv.extend(0.0).extend(0.0),
-                        normal: normal.extend(0.0),
+                        normal: (*normal).into(),
                         tangent: *tangent,
                     })
                     .collect::<Vec<Vertex>>(),
