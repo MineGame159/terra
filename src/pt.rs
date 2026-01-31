@@ -137,8 +137,8 @@ struct Material {
     clearcoat_roughness_texture: u32,
 
     normal_texture: u32,
+    normal_scale: f32,
 
-    _pad1: i32,
     _pad2: u32,
 }
 
@@ -337,7 +337,7 @@ impl<'a> Renderer<'a> {
                         &m.clearcoat_roughness_texture,
                     ),
                     normal_texture: texture(&mut textures, &m.normal_texture),
-                    _pad1: 0,
+                    normal_scale: m.normal_scale,
                     _pad2: 0,
                 }
             });

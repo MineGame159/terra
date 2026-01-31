@@ -59,7 +59,7 @@ float2 CartesianToSpherical(float3 dir, float rotation) {
     return float2(u, v);
 }
 
-float3 NormalMap(float4 tangent, float3 N, float3 N_map) {
+float3 NormalMap(float4 tangent, float3 N, float3 N_map, float scale) {
     // A. Transform Tangent to World Space
     let T_geom = normalize(mul((float3x3) ObjectToWorld(), tangent.xyz));
 
@@ -76,8 +76,8 @@ float3 NormalMap(float4 tangent, float3 N, float3 N_map) {
     // D. Create TBN Matrix (Tangent -> World)
     let TBN = float3x3(T, B, N);
 
-    // E. Decode Normal ([0,1] -> [-1,1])
-    let localNormal = normalize(N_map * 2.0 - 1.0);
+    // E. Decode Normal ([0,1] -> [-1,1]) and apply scale
+    let localNormal = normalize(N_map * 2.0 - 1.0) * float3(scale, scale, 1.0);
 
     // F. Apply TBN transformation
     // Note: Check if you need to flip Y for OpenGL/DirectX conventions.

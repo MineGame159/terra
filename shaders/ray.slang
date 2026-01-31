@@ -63,8 +63,8 @@ struct Material {
     uint clearcoat_roughness_texture;
 
     uint normal_texture;
+    float normal_scale;
 
-    uint _pad1;
     uint _pad2;
 
     float3 emissive(float2 uv) {
@@ -420,7 +420,7 @@ void SampleNormalMap(Vertex vertex, Material* material, inout SurfaceInteraction
 
     if (material.normal_texture > 0) {
         let N_map = textures[material.normal_texture - 1].SampleLevelZero(vertex.uv).xyz;
-        si.normal = NormalMap(vertex.tangent, si.normal, N_map);
+        si.normal = NormalMap(vertex.tangent, si.normal, N_map, material.normal_scale);
 
         if (dot(si.normal, si.normal_geo) < 0.0) {
             si.normal = si.normal_geo;

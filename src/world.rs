@@ -100,6 +100,7 @@ pub struct Material {
     pub clearcoat_roughness_texture: Texture,
 
     pub normal_texture: Texture,
+    pub normal_scale: f32,
 
     pub opaque: u32,
 }
@@ -132,6 +133,7 @@ impl Default for Material {
             clearcoat_roughness_texture: None,
 
             normal_texture: None,
+            normal_scale: 1.0,
 
             opaque: 0,
         }

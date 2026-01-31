@@ -107,56 +107,58 @@ impl ModelLoader<'_> {
     }
 
     fn get_mesh(&mut self, mesh: &Mesh, primitive: &Primitive) -> &world::Mesh {
-        self.meshes.entry(mesh.index()).or_insert({
-            let reader = primitive.reader(|buffer| Some(&self.buffer_data[buffer.index()]));
+        self.meshes
+            .entry(mesh.index() * 4096 + primitive.index())
+            .or_insert({
+                let reader = primitive.reader(|buffer| Some(&self.buffer_data[buffer.index()]));
 
-            let indices: Vec<u32> = {
-                profiling::scope!("indices");
-                match reader.read_indices().unwrap() {
-                    ReadIndices::U8(iter) => iter.map(move |i| i as u32).collect(),
-                    ReadIndices::U16(iter) => iter.map(move |i| i as u32).collect(),
-                    ReadIndices::U32(iter) => iter.collect(),
-                }
-            };
+                let indices: Vec<u32> = {
+                    profiling::scope!("indices");
+                    match reader.read_indices().unwrap() {
+                        ReadIndices::U8(iter) => iter.map(move |i| i as u32).collect(),
+                        ReadIndices::U16(iter) => iter.map(move |i| i as u32).collect(),
+                        ReadIndices::U32(iter) => iter.collect(),
+                    }
+                };
 
-            let positions: Vec<Vec3> = {
-                profiling::scope!("positions");
-                bytemuck::cast_vec(reader.read_positions().unwrap().collect::<Vec<[f32; 3]>>())
-            };
+                let positions: Vec<Vec3> = {
+                    profiling::scope!("positions");
+                    bytemuck::cast_vec(reader.read_positions().unwrap().collect::<Vec<[f32; 3]>>())
+                };
 
-            let uvs: Vec<Vec2> = {
-                profiling::scope!("uvs");
-                bytemuck::cast_vec(
-                    reader
-                        .read_tex_coords(0)
-                        .unwrap()
-                        .into_f32()
-                        .collect::<Vec<[f32; 2]>>(),
+                let uvs: Vec<Vec2> = {
+                    profiling::scope!("uvs");
+                    bytemuck::cast_vec(
+                        reader
+                            .read_tex_coords(0)
+                            .unwrap()
+                            .into_f32()
+                            .collect::<Vec<[f32; 2]>>(),
+                    )
+                };
+
+                let normals: Vec<Vec3> = {
+                    profiling::scope!("normals");
+                    bytemuck::cast_vec(reader.read_normals().unwrap().collect::<Vec<[f32; 3]>>())
+                };
+
+                let tangents: Option<Vec<Vec4>> = {
+                    profiling::scope!("tangents");
+                    match reader.read_tangents() {
+                        Some(iter) => Some(bytemuck::cast_vec(iter.collect::<Vec<[f32; 4]>>())),
+                        None => None,
+                    }
+                };
+
+                world::Mesh::new(
+                    self.gpu,
+                    &indices,
+                    &positions,
+                    &uvs,
+                    &normals,
+                    tangents.as_deref(),
                 )
-            };
-
-            let normals: Vec<Vec3> = {
-                profiling::scope!("normals");
-                bytemuck::cast_vec(reader.read_normals().unwrap().collect::<Vec<[f32; 3]>>())
-            };
-
-            let tangents: Option<Vec<Vec4>> = {
-                profiling::scope!("tangents");
-                match reader.read_tangents() {
-                    Some(iter) => Some(bytemuck::cast_vec(iter.collect::<Vec<[f32; 4]>>())),
-                    None => None,
-                }
-            };
-
-            world::Mesh::new(
-                self.gpu,
-                &indices,
-                &positions,
-                &uvs,
-                &normals,
-                tangents.as_deref(),
-            )
-        })
+            })
     }
 
     fn get_material(&mut self, mat: &Material) -> world::Material {
@@ -184,6 +186,7 @@ impl ModelLoader<'_> {
 
             normal_texture: self
                 .get_texture(mat.normal_texture().map(move |info| info.texture()), false),
+            normal_scale: mat.normal_texture().map_or(1.0, move |info| info.scale()),
 
             opaque: if mat.alpha_mode() == AlphaMode::Opaque {
                 1
