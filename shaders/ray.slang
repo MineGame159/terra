@@ -237,7 +237,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
         let sample = SampleEnvironment(GetEnvCDF(), envMap, pc.envRotation, pc.envIntensity, float2(Random(payload.rng), Random(payload.rng)));
 
         if (dot(si.normal, sample.dir) > 0.0 && dot(si.normal_geo, sample.dir) > 0.0) {
-            let occluded = TraceShadowRay(payload.rng, si.position + si.normal * 1e-4, sample.dir, 1e9);
+            let occluded = TraceShadowRay(payload.rng, si.get_origin(), sample.dir, 1e9);
 
             if (!occluded) {
                 let eval = EvaluateLayeredMaterial(si, sample.dir, mat);
@@ -267,7 +267,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
         let sample = lights[index].Sample(si.position);
 
         if (dot(si.normal, sample.dir) > 0.0 && dot(si.normal_geo, sample.dir) > 0.0) {
-            let occluded = TraceShadowRay(payload.rng, si.position + si.normal * 1e-4, sample.dir, sample.dist);
+            let occluded = TraceShadowRay(payload.rng, si.get_origin(), sample.dir, sample.dist);
 
             if (!occluded) {
                 let eval = EvaluateLayeredMaterial(si, sample.dir, mat);
@@ -302,7 +302,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     }
 
     payload.hit = sample.valid;
-    payload.new_origin = si.position + si.normal * (1e-4 + RayTCurrent() * 1e-5);
+    payload.new_origin = si.get_origin();
     payload.new_direction = sample.L;
     payload.color = float3(0.0);
     payload.pdf = 0.0;

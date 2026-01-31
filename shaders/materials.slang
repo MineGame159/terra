@@ -6,6 +6,10 @@ struct SurfaceInteraction {
     float3 view;
     float3 normal;
     float3 normal_geo;
+
+    float3 get_origin() {
+        return position + normal_geo * (1e-4 + RayTCurrent() * 1e-5);
+    }
 }
 
 struct MaterialProps {
