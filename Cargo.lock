@@ -644,7 +644,7 @@ dependencies = [
  "png",
  "ravif",
  "rayon",
- "zune-core 0.5.1",
+ "zune-core",
  "zune-jpeg",
 ]
 
@@ -1471,7 +1471,6 @@ dependencies = [
  "hecs",
  "image",
  "kdam",
- "png",
  "profiling",
  "serde",
  "serde_json",
@@ -1479,7 +1478,6 @@ dependencies = [
  "tracy-client",
  "ufbx",
  "vulkano",
- "zune-hdr",
 ]
 
 [[package]]
@@ -2009,24 +2007,9 @@ checksum = "bd8f3f50b848df28f887acb68e41201b5aea6bc8a8dacc00fb40635ff9a72fea"
 
 [[package]]
 name = "zune-core"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f423a2c17029964870cfaabb1f13dfab7d092a62a29a89264f4d36990ca414a"
-
-[[package]]
-name = "zune-core"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb8a0807f7c01457d0379ba880ba6322660448ddebc890ce29bb64da71fb40f9"
-
-[[package]]
-name = "zune-hdr"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51ff474631f80b14afc6dbc6bab78702ed2de7cd6af85f7a4ab21d3b08686426"
-dependencies = [
- "zune-core 0.4.12",
-]
 
 [[package]]
 name = "zune-inflate"
@@ -2043,5 +2026,5 @@ version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "87c86acb70a85b2c16f071f171847d1945e8f44812630463cd14ec83900ad01c"
 dependencies = [
- "zune-core 0.5.1",
+ "zune-core",
 ]

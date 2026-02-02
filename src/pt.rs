@@ -1,8 +1,9 @@
-use std::{collections::HashSet, f32, fs, sync::Arc, time::Duration};
+use std::{collections::HashSet, f32, fs::File, io::BufReader, sync::Arc, time::Duration};
 
 use bytesize::ByteSize;
 use glam::{UVec2, Vec2, Vec3, Vec3A, Vec4, Vec4Swizzles, uvec2, vec3};
 use hecs::World;
+use image::{EncodableLayout, ImageReader};
 use smallvec::smallvec;
 use vulkano::{
     DeviceAddress, Packed24_8,
@@ -33,7 +34,6 @@ use vulkano::{
     },
     shader::{ShaderModule, ShaderModuleCreateInfo, ShaderStages, spirv},
 };
-use zune_hdr::HdrDecoder;
 
 use crate::{
     gpu::{DescriptorInfo, Gpu, get_descriptor_size},
@@ -652,39 +652,26 @@ impl<'a> Renderer<'a> {
     fn setup_env_map_set(&mut self, path: &str) {
         // Read image
 
-        let env_bytes = {
-            profiling::scope!("fs::read");
-            fs::read(path).unwrap()
-        };
-
-        let mut env_decoder = {
-            profiling::scope!("HdrDecoder::new");
-            HdrDecoder::new(env_bytes)
-        };
-
-        let env_pixels: Vec<f32> = {
-            profiling::scope!("HdrDecoder::decode");
-            env_decoder
+        let image = {
+            profiling::scope!("ImageReader.decode");
+            ImageReader::new(BufReader::new(File::open(path).unwrap()))
+                .with_guessed_format()
+                .unwrap()
                 .decode()
                 .unwrap()
-                .iter()
-                .array_chunks::<3>()
-                .flat_map(move |[r, g, b]| [*r, *g, *b, 1.0])
-                .collect()
         };
 
-        let env_size = env_decoder
-            .get_dimensions()
-            .map(move |(width, height)| uvec2(width as u32, height as u32))
-            .unwrap();
+        let image = image.into_rgba32f();
+
+        let size = uvec2(image.width(), image.height());
 
         // Create image and sampler
 
         let (_, view) = self.gpu.create_filled_image(
-            env_size,
+            size,
             Format::R32G32B32A32_SFLOAT,
             ImageUsage::SAMPLED,
-            bytemuck::cast_slice(&env_pixels),
+            image.as_bytes(),
         );
 
         let sampler = Sampler::new(
@@ -696,7 +683,7 @@ impl<'a> Renderer<'a> {
         // Create CDF buffers
 
         let (conditional_buffer, marginal_buffer) =
-            self.create_env_map_cdf_buffers(env_size, bytemuck::cast_slice(&env_pixels));
+            self.create_env_map_cdf_buffers(size, bytemuck::cast_slice(&image));
 
         // Create set
 

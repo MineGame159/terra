@@ -7,8 +7,6 @@ mod pt;
 mod world;
 
 use std::{
-    fs::File,
-    io::BufWriter,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -16,8 +14,8 @@ use std::{
 use clap::Parser;
 use glam::{U8Vec3, UVec2, Vec3, Vec4, uvec2};
 use hecs::World;
+use image::ColorType;
 use kdam::tqdm;
-use png::{BitDepth, ColorType};
 use vulkano::{
     DeviceSize,
     buffer::{BufferUsage, Subbuffer},
@@ -141,7 +139,7 @@ fn main() {
     // Write image
 
     let pixels = read_image(&gpu, image);
-    write_png(&cli.out, cli.size, &pixels);
+    write_image(&cli.out, cli.size, &pixels);
 }
 
 #[profiling::function]
@@ -172,19 +170,15 @@ fn read_image(gpu: &Gpu, image: Arc<Image>) -> Vec<U8Vec3> {
 }
 
 #[profiling::function]
-fn write_png(path: &str, size: UVec2, pixels: &[U8Vec3]) {
-    let file = File::create(path).unwrap();
-    let writer = BufWriter::new(file);
-
-    let mut encoder = png::Encoder::new(writer, size.x, size.y);
-    encoder.set_color(ColorType::Rgb);
-    encoder.set_depth(BitDepth::Eight);
-
-    encoder
-        .write_header()
-        .unwrap()
-        .write_image_data(bytemuck::cast_slice(pixels))
-        .unwrap();
+fn write_image(path: &str, size: UVec2, pixels: &[U8Vec3]) {
+    image::save_buffer(
+        path,
+        bytemuck::cast_slice(pixels),
+        size.x,
+        size.y,
+        ColorType::Rgb8,
+    )
+    .unwrap();
 }
 
 fn map_color<TMO: ToneMappingOperator>(color: &Vec4) -> U8Vec3 {
