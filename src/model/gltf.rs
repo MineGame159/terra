@@ -109,7 +109,7 @@ impl ModelLoader<'_> {
     fn get_mesh(&mut self, mesh: &Mesh, primitive: &Primitive) -> &world::Mesh {
         self.meshes
             .entry(mesh.index() * 4096 + primitive.index())
-            .or_insert({
+            .or_insert_with(|| {
                 let reader = primitive.reader(|buffer| Some(&self.buffer_data[buffer.index()]));
 
                 let indices: Vec<u32> = {
