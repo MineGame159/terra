@@ -105,3 +105,9 @@ float PowerHeuristic(float f_pdf, float g_pdf) {
     let g2 = g_pdf * g_pdf;
     return f2 / (f2 + g2);
 }
+
+void GetOrthonormalBasis(float3 N, out float3 T, out float3 B) {
+    let up = abs(N.z) < 0.99999 ? float3(0, 0, 1) : float3(1, 0, 0);
+    T = normalize(cross(up, N));
+    B = cross(N, T);
+}

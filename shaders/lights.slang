@@ -10,6 +10,8 @@ enum LightType : uint {
     Point,
     Spot,
     Directional,
+    Rectangle,
+    Ellipse,
 }
 
 struct Light {
@@ -22,7 +24,11 @@ struct Light {
     float3 color;
     float3 direction;
 
-    LightSample Sample(float3 position) {
+    float2 size;
+
+    float2 _pad;
+
+    LightSample Sample(inout uint rng, float3 position) {
         switch (type) {
             case LightType.Point:
                 return SamplePointLight(position);
@@ -30,10 +36,16 @@ struct Light {
                 return SampleSpotLight(position);
             case LightType.Directional:
                 return SampleDirectionalLight();
+            case LightType.Rectangle:
+                return SampleRectangleLight(rng, position);
+            case LightType.Ellipse:
+                return SampleEllipseLight(rng, position);
             default:
                 return LightSample();
         }
     }
+
+    // --- Punctual Lights ---
 
     LightSample SamplePointLight(float3 position) {
         LightSample sample;
@@ -89,6 +101,89 @@ struct Light {
 
         // No falloff for directional lights
         sample.Li = this.color;
+
+        return sample;
+    }
+
+    // --- Area Lights ---
+
+    LightSample SampleRectangleLight(inout uint rng, float3 surfPos) {
+        LightSample sample;
+
+        // 1. Build Basis
+        float3 right, up;
+        GetOrthonormalBasis(normalize(this.direction), right, up);
+
+        // 2. Random Point on Rectangle
+        // Random(rng) returns [0,1], we map to [-0.5, 0.5]
+        let u = Random(rng) - 0.5;
+        let v = Random(rng) - 0.5;
+
+        let localPos = (u * this.size.x * right) + (v * this.size.y * up);
+        let lightPos = this.position + localPos;
+
+        // 3. Calculate Vector
+        let L = lightPos - surfPos;
+        let distSq = dot(L, L);
+        sample.dist = sqrt(distSq);
+        sample.dir = L / sample.dist;
+
+        // 4. Calculate Contribution
+        // Since MIS is off, we calculate the full Monte Carlo weight here.
+        // Li = Emission * (cosThetaLight * Area) / distSq
+        let cosLight = dot(-sample.dir, normalize(this.direction));
+
+        if (cosLight > 0.0) {
+            let area = this.size.x * this.size.y;
+            let attenuation = GetRangeAttenuation(distSq, this.range); // includes 1/distSq
+
+            sample.Li = this.color * attenuation * cosLight * area;
+        } else {
+            sample.Li = float3(0.0);
+        }
+
+        return sample;
+    }
+
+    LightSample SampleEllipseLight(inout uint rng, float3 surfPos) {
+        LightSample sample;
+
+        // 1. Build Basis
+        float3 right, up;
+        GetOrthonormalBasis(normalize(this.direction), right, up);
+
+        // 2. Random Point on Ellipse (Uniform Disk Sampling)
+        // sqrt ensures area-uniform distribution
+        let r = sqrt(Random(rng));
+        let theta = 6.2831853 * Random(rng); // 2 * PI
+
+        // Convert Polar to Cartesian on unit disk
+        let diskPos = float2(r * cos(theta), r * sin(theta));
+
+        // Scale by radii (size stores diameters, so multiply by 0.5)
+        let localPos = (diskPos.x * this.size.x * 0.5 * right) +
+                            (diskPos.y * this.size.y * 0.5 * up);
+
+        let lightPos = this.position + localPos;
+
+        // 3. Calculate Vector
+        let L = lightPos - surfPos;
+        let distSq = dot(L, L);
+        sample.dist = sqrt(distSq);
+        sample.dir = L / sample.dist;
+
+        // 4. Calculate Contribution
+        let cosLight = dot(-sample.dir, normalize(this.direction));
+
+        if (cosLight > 0.0) {
+            // Area = PI * a * b
+            let area = float.getPi() * (this.size.x * 0.5) * (this.size.y * 0.5);
+            let attenuation = GetRangeAttenuation(distSq, this.range);
+
+            sample.Li = this.color * attenuation * cosLight * area;
+        } else {
+            sample.Li = float3(0.0);
+        }
 
         return sample;
     }

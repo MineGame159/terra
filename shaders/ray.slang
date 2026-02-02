@@ -264,7 +264,7 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
 
     if (lightCount > 0) {
         let index = min(uint(Random(payload.rng) * float(lightCount)), lightCount - 1);
-        let sample = lights[index].Sample(si.position);
+        let sample = lights[index].Sample(payload.rng, si.position);
 
         if (dot(si.normal, sample.dir) > 0.0 && dot(si.normal_geo, sample.dir) > 0.0) {
             let occluded = TraceShadowRay(payload.rng, si.get_origin(), sample.dir, sample.dist);

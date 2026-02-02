@@ -1473,6 +1473,8 @@ dependencies = [
  "kdam",
  "png",
  "profiling",
+ "serde",
+ "serde_json",
  "smallvec",
  "tracy-client",
  "ufbx",

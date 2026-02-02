@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use glam::{Mat4, Quat, Vec2, Vec3, Vec4, uvec2};
+use glam::{Mat4, Quat, Vec2, Vec3, Vec4, uvec2, vec2};
 use gltf::{
     Image, Material, Mesh, Node, Primitive, Texture,
     camera::Projection,
@@ -11,6 +11,7 @@ use gltf::{
     texture::{MagFilter, MinFilter, WrappingMode},
 };
 use hecs::World;
+use serde::Deserialize;
 use vulkano::{
     format::Format,
     image::{
@@ -20,6 +21,29 @@ use vulkano::{
 };
 
 use crate::{gpu::Gpu, world};
+
+#[derive(Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+enum AreaShape {
+    Square,
+    Rectangle,
+    Disk,
+    Ellipse,
+}
+
+#[derive(Deserialize)]
+struct AreaLight {
+    shape: AreaShape,
+    size_x: f32,
+    size_y: f32,
+    color: [f32; 3],
+    energy: f32,
+}
+
+#[derive(Deserialize)]
+struct NodeExtras {
+    area_light: Option<AreaLight>,
+}
 
 struct ModelLoader<'a> {
     gpu: &'a Gpu,
@@ -69,7 +93,7 @@ impl ModelLoader<'_> {
             }
         }
 
-        // Light
+        // Punctual Light
         if let Some(light) = node.light() {
             let color = Vec3::from_array(light.color()) * (light.intensity() / 683.0);
 
@@ -96,6 +120,26 @@ impl ModelLoader<'_> {
                 Kind::Directional => self.world.spawn((
                     world::Node::from(transform),
                     world::DirectionalLight { color },
+                )),
+            };
+        }
+
+        // Area Light
+        if let Some(extras) = node.extras()
+            && let Ok(extras) = serde_json::from_str::<NodeExtras>(extras.get())
+            && let Some(light) = extras.area_light
+        {
+            let color = Vec3::from_array(light.color) * light.energy;
+            let size = vec2(light.size_x, light.size_y);
+
+            match light.shape {
+                AreaShape::Square | AreaShape::Rectangle => self.world.spawn((
+                    world::Node::from(transform),
+                    world::RectangleLight { color, size },
+                )),
+                AreaShape::Disk | AreaShape::Ellipse => self.world.spawn((
+                    world::Node::from(transform),
+                    world::EllipseLight { color, size },
                 )),
             };
         }

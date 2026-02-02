@@ -199,6 +199,18 @@ pub struct DirectionalLight {
     pub color: Vec3,
 }
 
+#[derive(PartialEq, Clone)]
+pub struct RectangleLight {
+    pub color: Vec3,
+    pub size: Vec2,
+}
+
+#[derive(PartialEq, Clone)]
+pub struct EllipseLight {
+    pub color: Vec3,
+    pub size: Vec2,
+}
+
 // --- Tangent generation ---
 
 struct MeshGeometry<'a> {

@@ -1,7 +1,7 @@
 use std::{collections::HashSet, f32, fs, sync::Arc, time::Duration};
 
 use bytesize::ByteSize;
-use glam::{UVec2, Vec3, Vec3A, Vec4, Vec4Swizzles, uvec2, vec3};
+use glam::{UVec2, Vec2, Vec3, Vec3A, Vec4, Vec4Swizzles, uvec2, vec3};
 use hecs::World;
 use smallvec::smallvec;
 use vulkano::{
@@ -37,7 +37,10 @@ use zune_hdr::HdrDecoder;
 
 use crate::{
     gpu::{DescriptorInfo, Gpu, get_descriptor_size},
-    world::{Camera, DirectionalLight, MeshInstance, Node, PointLight, SpotLight, Texture, Vertex},
+    world::{
+        Camera, DirectionalLight, EllipseLight, MeshInstance, Node, PointLight, RectangleLight,
+        SpotLight, Texture, Vertex,
+    },
 };
 
 #[derive(Copy, Clone)]
@@ -162,6 +165,10 @@ struct Light {
     position: Vec3A,
     color: Vec3A,
     direction: Vec3A,
+
+    size: Vec2,
+
+    _pad: Vec2,
 }
 
 #[derive(Copy, Clone)]
@@ -420,37 +427,35 @@ impl<'a> Renderer<'a> {
 
         for (node, light) in world.query_mut::<(&Node, &PointLight)>() {
             lights.push(Light {
-                type_: 0,
                 range: light.range,
-                inner_cone_cos: 0.0,
-                outer_cone_cos: 0.0,
-                position: node.position.into(),
-                color: light.color.into(),
-                direction: Vec3A::ZERO,
+                ..base_light(0, node, light.color)
             });
         }
 
         for (node, light) in world.query_mut::<(&Node, &SpotLight)>() {
             lights.push(Light {
-                type_: 1,
                 range: light.range,
                 inner_cone_cos: light.inner_cone_angle.cos(),
                 outer_cone_cos: light.outer_cone_angle.cos(),
-                position: node.position.into(),
-                color: light.color.into(),
-                direction: node.transform().transform_vector3(Vec3::NEG_Z).into(),
+                ..base_light(1, node, light.color)
             });
         }
 
         for (node, light) in world.query_mut::<(&Node, &DirectionalLight)>() {
+            lights.push(base_light(2, node, light.color));
+        }
+
+        for (node, light) in world.query_mut::<(&Node, &RectangleLight)>() {
             lights.push(Light {
-                type_: 2,
-                range: 0.0,
-                inner_cone_cos: 0.0,
-                outer_cone_cos: 0.0,
-                position: node.position.into(),
-                color: light.color.into(),
-                direction: node.transform().transform_vector3(Vec3::NEG_Z).into(),
+                size: light.size,
+                ..base_light(3, node, light.color)
+            });
+        }
+
+        for (node, light) in world.query_mut::<(&Node, &EllipseLight)>() {
+            lights.push(Light {
+                size: light.size,
+                ..base_light(4, node, light.color)
             });
         }
 
@@ -880,6 +885,20 @@ impl<'a> Renderer<'a> {
                 .unwrap(),
             );
         }
+    }
+}
+
+fn base_light(type_: u32, node: &Node, color: Vec3) -> Light {
+    Light {
+        type_,
+        range: 0.0,
+        inner_cone_cos: 0.0,
+        outer_cone_cos: 0.0,
+        position: node.position.into(),
+        color: color.into(),
+        direction: node.transform().transform_vector3(Vec3::NEG_Z).into(),
+        size: Vec2::ZERO,
+        _pad: Vec2::ZERO,
     }
 }
 
